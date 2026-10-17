@@ -1,0 +1,6 @@
+{
+  "name": "Gerenciapró — Painel Premium",
+  "description": "Backoffice completo de clientes, planos, vencimentos e cobranças com integração Mercado Pago e PWA.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
