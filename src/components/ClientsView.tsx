@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import {
   Users,
   Search,
@@ -18,11 +18,30 @@ import {
   RotateCcw,
   Sparkles,
   ChevronDown,
-  Filter
+  Filter,
+  Camera,
+  ArrowUpDown,
+  MoreVertical,
+  AlarmClock,
+  ToggleLeft,
+  ToggleRight,
+  ShieldCheck,
+  FileSpreadsheet,
+  X,
+  Upload,
+  Clipboard,
+  Folder,
+  Archive,
+  ArchiveRestore,
+  Cake,
+  Gift
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Client, ClientStatus } from '../types';
-import { exportClientsToExcel, exportClientsToCSV } from '../utils/excel';
+import { exportClientsToExcel, exportClientsToCSV, parseExcelBuffer, ImportResult, downloadSampleExcelTemplate } from '../utils/excel';
+import { processClientAvatar } from '../utils/imageHelper';
+import { downloadClientAlarmCalendarFile, getDaysDiffFromReference } from '../utils/notifications';
+import { getClientBirthdayInfo } from '../utils/birthdays';
 
 interface ClientsViewProps {
   onNewClient: () => void;
@@ -44,31 +63,54 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
     deleteClient,
     bulkDeleteClients,
     updateClient,
+    updateClientPhoto,
+    toggleClientStatus,
+    archiveClient,
+    unarchiveClient,
+    archiveExpiredClients,
+    bulkArchiveClients,
+    importClientsBatch,
     sendWhatsAppReminder,
-    setActiveTab,
+    copyClientField,
+    copyClientFullCredentials,
     playSound
   } = useApp();
 
+  const [clientFolder, setClientFolder] = useState<'ativos' | 'inativos'>('ativos');
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [localSearch, setLocalSearch] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>('todos');
   const [planFilter, setPlanFilter] = useState<string>('todos');
   const [serverFilter, setServerFilter] = useState<string>('todos');
-  const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [dueFilter, setDueFilter] = useState<string>('todos');
+  const [sortBy, setSortBy] = useState<'vencimento' | 'nome_asc' | 'nome_desc' | 'valor_desc' | 'recentes'>('vencimento');
+
   const [revealedPasswords, setRevealedPasswords] = useState<Record<string, boolean>>({});
+  const [openActionMenuId, setOpenActionMenuId] = useState<string | null>(null);
 
   // Pagination
   const [currentPage, setCurrentPage] = useState<number>(1);
   const [rowsPerPage, setRowsPerPage] = useState<number>(25);
 
-  // Bulk delete confirmation modal state
+  // Modals state inside Clientes
   const [showClearConfirm, setShowClearConfirm] = useState<boolean>(false);
   const [showExportMenu, setShowExportMenu] = useState<boolean>(false);
+  const [showImportModal, setShowImportModal] = useState<boolean>(false);
 
-  // Filter clients
+  // Photo change state
+  const [targetPhotoClientId, setTargetPhotoClientId] = useState<string | null>(null);
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+
+  // Integrated Import State
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importParsing, setImportParsing] = useState(false);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [importMode, setImportMode] = useState<'append' | 'update' | 'replace'>('append');
+
+  // Filter & Sort clients
   const filteredClients = useMemo(() => {
-    return clients.filter(c => {
-      // Search text
+    const list = clients.filter(c => {
+      // Search
       if (localSearch.trim()) {
         const query = localSearch.toLowerCase();
         const matchesName = (c.nome || '').toLowerCase().includes(query);
@@ -82,6 +124,10 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
           return false;
         }
       }
+
+      // Subpasta: Ativos vs Inativos/Arquivados
+      if (clientFolder === 'ativos' && c.arquivado) return false;
+      if (clientFolder === 'inativos' && !c.arquivado) return false;
 
       // Status
       if (statusFilter !== 'todos' && c.status !== statusFilter) {
@@ -98,9 +144,30 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
         return false;
       }
 
+      // Vencimento filter
+      if (dueFilter !== 'todos') {
+        const diff = getDaysDiffFromReference(c.vencimento);
+        if (dueFilter === 'vencidos' && diff <= 0) return false;
+        if (dueFilter === 'hoje' && diff !== 0) return false;
+        if (dueFilter === '7d' && (diff > 0 || diff < -7)) return false;
+        if (dueFilter === 'em_dia' && diff > 0) return false;
+      }
+
       return true;
     });
-  }, [clients, localSearch, statusFilter, planFilter, serverFilter]);
+
+    // Sorting
+    return list.sort((a, b) => {
+      if (sortBy === 'nome_asc') return a.nome.localeCompare(b.nome);
+      if (sortBy === 'nome_desc') return b.nome.localeCompare(a.nome);
+      if (sortBy === 'valor_desc') return (Number(b.valor) || 0) - (Number(a.valor) || 0);
+      if (sortBy === 'recentes') return (b.createdAt || '').localeCompare(a.createdAt || '');
+      // Vencimento (most overdue / urgent first)
+      const diffA = getDaysDiffFromReference(a.vencimento);
+      const diffB = getDaysDiffFromReference(b.vencimento);
+      return diffB - diffA;
+    });
+  }, [clients, clientFolder, localSearch, statusFilter, planFilter, serverFilter, dueFilter, sortBy]);
 
   // Paginated clients
   const totalPages = Math.ceil(filteredClients.length / rowsPerPage) || 1;
@@ -119,14 +186,6 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
 
   const handleSelectRow = (id: string) => {
     setSelectedIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
-  };
-
-  const copyToClipboard = (text: string, label: string) => {
-    if (!text) return;
-    navigator.clipboard.writeText(text);
-    setCopiedField(label);
-    playSound('beep');
-    setTimeout(() => setCopiedField(null), 2000);
   };
 
   const togglePasswordVisibility = (id: string) => {
@@ -148,6 +207,22 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
     }
   };
 
+  const handleBulkArchive = async () => {
+    if (selectedIds.length === 0) return;
+    if (confirm(`Deseja mover os ${selectedIds.length} clientes selecionados para Cliente inativos?`)) {
+      await bulkArchiveClients(selectedIds, true);
+      setSelectedIds([]);
+    }
+  };
+
+  const handleBulkUnarchive = async () => {
+    if (selectedIds.length === 0) return;
+    if (confirm(`Deseja reativar os ${selectedIds.length} clientes selecionados e movê-los de volta para Clientes Ativos?`)) {
+      await bulkArchiveClients(selectedIds, false);
+      setSelectedIds([]);
+    }
+  };
+
   const handleClearAll = async () => {
     const allIds = clients.map(c => c.id);
     await bulkDeleteClients(allIds);
@@ -155,7 +230,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
     setShowClearConfirm(false);
   };
 
-  const handleExportAll = (format: 'xlsx' | 'csv') => {
+  const handleExport = (format: 'xlsx' | 'csv') => {
     const targetList = selectedIds.length > 0 
       ? clients.filter(c => selectedIds.includes(c.id))
       : filteredClients;
@@ -171,53 +246,117 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
 
   const calculateDaysText = (dateStr: string) => {
     if (!dateStr) return '';
-    let targetDate: Date;
-    if (dateStr.includes('/')) {
-      const [d, m, y] = dateStr.split('/');
-      targetDate = new Date(Number(y), Number(m) - 1, Number(d));
-    } else {
-      targetDate = new Date(dateStr);
-    }
-    const now = new Date(2026, 9, 17);
-    const diffDays = Math.floor((now.getTime() - targetDate.getTime()) / (1000 * 60 * 60 * 24));
-    
+    const diffDays = getDaysDiffFromReference(dateStr);
     if (diffDays > 0) return `${diffDays}d atrasado`;
     if (diffDays === 0) return 'Vence hoje';
     return `em ${Math.abs(diffDays)}d`;
   };
 
+  // Quick photo upload from table row
+  const handleOpenPhotoPicker = (clientId: string) => {
+    setTargetPhotoClientId(clientId);
+    avatarInputRef.current?.click();
+  };
+
+  const handlePhotoFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !targetPhotoClientId) return;
+    try {
+      const dataUri = await processClientAvatar(file);
+      await updateClientPhoto(targetPhotoClientId, dataUri);
+      playSound('sino');
+    } catch {
+      alert('Erro ao carregar a foto do cliente.');
+    } finally {
+      setTargetPhotoClientId(null);
+      e.target.value = '';
+    }
+  };
+
+  // Integrated Import handlers
+  const handleImportFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selected = e.target.files?.[0];
+    if (!selected) return;
+    setImportFile(selected);
+    setImportParsing(true);
+    try {
+      const buffer = await selected.arrayBuffer();
+      const result = parseExcelBuffer(buffer, clients);
+      setImportResult(result);
+      playSound('sino');
+    } catch (err: unknown) {
+      const error = err as Error;
+      alert(`Erro ao ler o arquivo: ${error.message}`);
+    } finally {
+      setImportParsing(false);
+    }
+  };
+
+  const handleConfirmImport = async () => {
+    if (!importResult) return;
+    setImportParsing(true);
+    try {
+      const toImport = importResult.validRows
+        .filter(r => !r.hasErrors)
+        .map(r => r.parsed);
+
+      await importClientsBatch(toImport, importMode);
+      setShowImportModal(false);
+      setImportFile(null);
+      setImportResult(null);
+      playSound('sino');
+    } catch (err: unknown) {
+      const error = err as Error;
+      alert(`Erro na importação: ${error.message}`);
+    } finally {
+      setImportParsing(false);
+    }
+  };
+
   return (
     <div className="space-y-6 animate-in fade-in duration-200">
-      {/* Top Header matching tela 1.png */}
+      {/* Hidden file input for fast row avatar replacement */}
+      <input
+        type="file"
+        ref={avatarInputRef}
+        accept="image/*"
+        onChange={handlePhotoFileChange}
+        className="hidden"
+      />
+
+      {/* Top Header & Central Toolbar */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="font-display text-3xl md:text-4xl font-extrabold text-white tracking-tight">
-            Clientes
+          <h1 className="font-display text-3xl md:text-4xl font-extrabold text-white tracking-tight flex items-center gap-3">
+            <span>Clientes</span>
+            <span className="text-xs font-mono-code font-bold px-2.5 py-1 rounded-full bg-red-950/80 border border-red-800 text-red-400 shadow-[0_0_10px_rgba(220,38,38,0.3)]">
+              {filteredClients.length} cadastrados
+            </span>
           </h1>
-          <p className="text-sm text-gray-400 mt-1">
-            {filteredClients.length} cliente(s) encontrado(s) · {selectedIds.length} selecionado(s)
+          <p className="text-xs sm:text-sm text-gray-400 mt-1">
+            Gestão unificada: visualização, cadastro, edição, importação e exportação de clientes em um só lugar.
           </p>
         </div>
 
-        {/* Top Right Action Buttons */}
+        {/* Centralized Action Buttons */}
         <div className="flex items-center flex-wrap gap-2.5">
           {/* Limpar Todos os Clientes */}
           <button
             onClick={() => setShowClearConfirm(true)}
-            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-red-900/60 bg-[#160c10] text-red-400 hover:bg-red-950/60 hover:text-red-300 hover:border-red-600 text-xs font-semibold tracking-wide transition-all"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-red-950 bg-[#120a0e] text-red-400/90 hover:bg-red-950/60 hover:text-red-300 hover:border-red-600/70 text-xs font-semibold tracking-wide transition-all"
             title="Limpar todos os clientes cadastrados"
           >
-            <Trash2 size={14} />
-            <span>Limpar Todos os Clientes</span>
+            <Trash2 size={13} />
+            <span className="hidden sm:inline">Limpar Base</span>
           </button>
 
-          {/* Importar Planilha */}
+          {/* Importar Planilha (Centralizado) */}
           <button
-            onClick={() => setActiveTab('importacao')}
-            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-[#23293d] bg-[#111420] text-gray-200 hover:text-white hover:border-[#353d5a] text-xs font-semibold tracking-wide transition-all"
+            onClick={() => setShowImportModal(true)}
+            className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-[#23293d] bg-[#111420] text-gray-200 hover:text-white hover:border-red-600/60 text-xs font-semibold tracking-wide transition-all shadow-sm group"
             title="Importar planilha Excel ou CSV"
           >
-            <UploadCloud size={14} className="text-red-500" />
+            <UploadCloud size={15} className="text-red-500 group-hover:scale-110 transition-transform" />
             <span>Importar Planilha</span>
           </button>
 
@@ -225,38 +364,38 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
           <div className="relative">
             <button
               onClick={() => setShowExportMenu(!showExportMenu)}
-              className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-[#23293d] bg-[#111420] text-gray-200 hover:text-white hover:border-[#353d5a] text-xs font-semibold tracking-wide transition-all"
+              className="flex items-center gap-1.5 px-3.5 py-2.5 rounded-xl border border-[#23293d] bg-[#111420] text-gray-200 hover:text-white hover:border-red-600/60 text-xs font-semibold tracking-wide transition-all shadow-sm"
               title="Exportar clientes"
             >
-              <Download size={14} className="text-red-500" />
+              <Download size={15} className="text-red-500" />
               <span>Exportar</span>
               <ChevronDown size={13} className="text-gray-500" />
             </button>
 
             {showExportMenu && (
-              <div className="absolute right-0 mt-2 w-48 bg-[#0f1118] border border-[#222738] rounded-xl shadow-2xl p-1.5 z-40">
+              <div className="absolute right-0 mt-2 w-52 bg-[#0c0e15] border border-red-950/80 rounded-2xl shadow-2xl p-2 z-40 animate-in fade-in slide-in-from-top-1">
                 <button
-                  onClick={() => handleExportAll('xlsx')}
-                  className="w-full text-left px-3 py-2 text-xs text-gray-300 hover:text-white hover:bg-[#1a1e2d] rounded-lg transition-colors flex items-center justify-between"
+                  onClick={() => handleExport('xlsx')}
+                  className="w-full text-left px-3 py-2 text-xs text-gray-200 hover:text-white hover:bg-red-950/50 rounded-xl transition-colors flex items-center justify-between"
                 >
-                  <span>Exportar para Excel (.xlsx)</span>
-                  <span className="text-[10px] bg-emerald-950 text-emerald-400 px-1 rounded">XLSX</span>
+                  <span>Exportar Excel (.xlsx)</span>
+                  <span className="text-[10px] bg-emerald-950 text-emerald-400 px-1.5 py-0.5 rounded font-mono-code">XLSX</span>
                 </button>
                 <button
-                  onClick={() => handleExportAll('csv')}
-                  className="w-full text-left px-3 py-2 text-xs text-gray-300 hover:text-white hover:bg-[#1a1e2d] rounded-lg transition-colors flex items-center justify-between"
+                  onClick={() => handleExport('csv')}
+                  className="w-full text-left px-3 py-2 text-xs text-gray-200 hover:text-white hover:bg-red-950/50 rounded-xl transition-colors flex items-center justify-between mt-1"
                 >
-                  <span>Exportar para CSV (.csv)</span>
-                  <span className="text-[10px] bg-blue-950 text-blue-400 px-1 rounded">CSV</span>
+                  <span>Exportar CSV (.csv)</span>
+                  <span className="text-[10px] bg-blue-950 text-blue-400 px-1.5 py-0.5 rounded font-mono-code">CSV</span>
                 </button>
               </div>
             )}
           </div>
 
-          {/* + Novo Cliente (Vibrant Red `#dc2626`) */}
+          {/* + Novo Cliente */}
           <button
             onClick={onNewClient}
-            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold tracking-wide transition-all shadow-[0_0_15px_rgba(220,38,38,0.4)] hover:shadow-[0_0_20px_rgba(220,38,38,0.6)]"
+            className="flex items-center gap-1.5 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold tracking-wide transition-all shadow-[0_0_20px_rgba(220,38,38,0.5)] hover:shadow-[0_0_25px_rgba(220,38,38,0.7)] hover:scale-[1.02]"
           >
             <Plus size={16} strokeWidth={2.5} />
             <span>Novo Cliente</span>
@@ -264,11 +403,62 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
         </div>
       </div>
 
-      {/* Filter and Search Bar matching tela 1.png */}
-      <div className="bg-[#0c0e15] border border-[#1b1f2e] rounded-2xl p-4 flex flex-col lg:flex-row items-center gap-3">
+      {/* Subpastas: Clientes Ativos vs Inativos / Arquivados */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#0c0e17] border border-[#1c2132] p-2.5 rounded-2xl">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setClientFolder('ativos'); setCurrentPage(1); }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              clientFolder === 'ativos'
+                ? 'bg-[#180e14] text-white border border-red-600/80 shadow-[0_0_15px_rgba(220,38,38,0.3)]'
+                : 'bg-transparent text-gray-400 hover:text-white border border-transparent'
+            }`}
+          >
+            <Folder size={14} className={clientFolder === 'ativos' ? 'text-red-500' : 'text-gray-500'} />
+            <span>Clientes Ativos</span>
+            <span className="text-[11px] bg-red-950/80 text-red-300 border border-red-800/60 px-2 py-0.5 rounded-full font-mono-code font-bold">
+              {clients.filter(c => !c.arquivado).length}
+            </span>
+          </button>
+
+          <button
+            onClick={() => { setClientFolder('inativos'); setCurrentPage(1); }}
+            className={`flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+              clientFolder === 'inativos'
+                ? 'bg-[#18130e] text-white border border-amber-600/80 shadow-[0_0_15px_rgba(245,158,11,0.3)]'
+                : 'bg-transparent text-gray-400 hover:text-white border border-transparent'
+            }`}
+          >
+            <Archive size={14} className={clientFolder === 'inativos' ? 'text-amber-500' : 'text-gray-500'} />
+            <span>Cliente inativos</span>
+            <span className="text-[11px] bg-amber-950/80 text-amber-300 border border-amber-800/60 px-2 py-0.5 rounded-full font-mono-code font-bold">
+              {clients.filter(c => !!c.arquivado).length}
+            </span>
+          </button>
+        </div>
+
+        {/* Botão Arquivar Expirados */}
+        {clientFolder === 'ativos' && (
+          <button
+            onClick={async () => {
+              if (confirm('Deseja arquivar todos os clientes com vencimento expirado que não renovaram? Eles serão movidos para a subpasta de Inativos.')) {
+                await archiveExpiredClients();
+              }
+            }}
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-[#14121a] hover:bg-[#1f1a28] border border-amber-900/60 hover:border-amber-600/80 text-amber-400 hover:text-amber-300 text-xs font-semibold transition-all self-end sm:self-auto"
+            title="Arquivar clientes expirados em atraso ou suspensos"
+          >
+            <Archive size={14} />
+            <span>Arquivar Expirados ({clients.filter(c => !c.arquivado && (c.status === 'Em atraso' || c.status === 'Suspenso' || c.status === 'Cancelado')).length})</span>
+          </button>
+        )}
+      </div>
+
+      {/* Filter, Search & Sorting Bar */}
+      <div className="tech-card rounded-2xl p-4 flex flex-col lg:flex-row items-center gap-3">
         {/* Search Input */}
         <div className="relative flex-1 w-full">
-          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500" size={17} />
+          <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-500" size={16} />
           <input
             type="text"
             value={localSearch}
@@ -276,13 +466,13 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
               setLocalSearch(e.target.value);
               setCurrentPage(1);
             }}
-            placeholder="Buscar por nome, e-mail, whatsapp, servidor..."
-            className="w-full bg-[#111420] border border-[#202538] focus:border-red-600/70 focus:ring-1 focus:ring-red-600/40 rounded-xl pl-10 pr-4 py-2.5 text-xs text-gray-200 placeholder-gray-500 outline-none transition-all"
+            placeholder="Buscar por nome, e-mail, whatsapp, servidor, MAC, app..."
+            className="w-full bg-[#111420] border border-[#202538] focus:border-red-600/80 rounded-xl pl-10 pr-4 py-2.5 text-xs text-gray-200 placeholder-gray-500 outline-none transition-all"
           />
         </div>
 
-        {/* Filter Dropdowns */}
-        <div className="flex items-center flex-wrap gap-2.5 w-full lg:w-auto">
+        {/* Filter & Sort Dropdowns */}
+        <div className="flex items-center flex-wrap gap-2 w-full lg:w-auto">
           {/* Status Dropdown */}
           <select
             value={statusFilter}
@@ -298,6 +488,22 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
             <option value="Vencendo (7d)">Vencendo (7d)</option>
             <option value="Pendente">Pendente</option>
             <option value="Suspenso">Suspenso</option>
+          </select>
+
+          {/* Vencimento Dropdown */}
+          <select
+            value={dueFilter}
+            onChange={(e) => {
+              setDueFilter(e.target.value);
+              setCurrentPage(1);
+            }}
+            className="bg-[#111420] border border-[#202538] text-gray-300 text-xs rounded-xl px-3 py-2.5 outline-none focus:border-red-600"
+          >
+            <option value="todos">Vencimento: Todos</option>
+            <option value="vencidos">Vencidos / Atrasados</option>
+            <option value="hoje">Vencem Hoje</option>
+            <option value="7d">Próximos 7 dias</option>
+            <option value="em_dia">Em dia</option>
           </select>
 
           {/* Plan Dropdown */}
@@ -329,21 +535,60 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
               <option key={s.id} value={s.nome}>{s.nome}</option>
             ))}
           </select>
+
+          {/* Sort By */}
+          <select
+            value={sortBy}
+            onChange={(e) => setSortBy(e.target.value as any)}
+            className="bg-[#111420] border border-[#202538] text-gray-300 text-xs rounded-xl px-3 py-2.5 outline-none focus:border-red-600"
+          >
+            <option value="vencimento">Ordenar: Mais Urgentes</option>
+            <option value="nome_asc">Nome (A-Z)</option>
+            <option value="nome_desc">Nome (Z-A)</option>
+            <option value="valor_desc">Maior Valor</option>
+            <option value="recentes">Mais Recentes</option>
+          </select>
         </div>
       </div>
 
       {/* Bulk action banner when items selected */}
       {selectedIds.length > 0 && (
-        <div className="bg-[#1b1218] border border-red-900/60 rounded-xl px-4 py-2.5 flex items-center justify-between animate-in fade-in">
-          <div className="flex items-center gap-2 text-xs font-semibold text-red-300">
-            <CheckSquare size={16} className="text-red-500" />
+        <div className="bg-[#180e15] border border-red-600/70 rounded-2xl px-5 py-3 flex items-center justify-between shadow-[0_0_20px_rgba(220,38,38,0.25)] animate-in fade-in">
+          <div className="flex items-center gap-2.5 text-xs font-semibold text-white">
+            <CheckSquare size={17} className="text-red-500" />
             <span>{selectedIds.length} clientes selecionados</span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center flex-wrap gap-2">
+            {clientFolder === 'ativos' ? (
+              <button
+                onClick={handleBulkArchive}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-amber-950 hover:bg-amber-900 text-amber-200 border border-amber-750 text-xs font-bold transition-all shadow-[0_0_12px_rgba(245,158,11,0.3)] hover:scale-[1.02]"
+                title="Mover clientes selecionados coletivamente para a pasta Cliente inativos"
+              >
+                <Archive size={13} className="text-amber-400" />
+                <span>Mover para Cliente inativos ({selectedIds.length})</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleBulkUnarchive}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-950 hover:bg-emerald-900 text-emerald-200 border border-emerald-750 text-xs font-bold transition-all shadow-[0_0_12px_rgba(16,185,129,0.3)] hover:scale-[1.02]"
+                title="Reativar e mover clientes selecionados de volta para Clientes Ativos"
+              >
+                <ArchiveRestore size={13} className="text-emerald-400" />
+                <span>Mover para Ativos ({selectedIds.length})</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => handleExport('xlsx')}
+              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-[#221828] hover:bg-[#2e1e36] text-gray-200 text-xs font-medium border border-red-950 transition-all"
+            >
+              <Download size={13} className="text-red-400" /> Exportar selecionados
+            </button>
             <button
               onClick={handleBulkDelete}
-              className="flex items-center gap-1 px-3 py-1.5 rounded-lg bg-red-950/80 hover:bg-red-900 text-red-300 border border-red-800 text-xs font-medium transition-all"
+              className="flex items-center gap-1 px-3 py-1.5 rounded-xl bg-red-950 hover:bg-red-900 text-red-200 border border-red-800 text-xs font-bold transition-all shadow-[0_0_10px_rgba(220,38,38,0.3)]"
             >
               <Trash2 size={13} /> Excluir selecionados
             </button>
@@ -357,14 +602,14 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
         </div>
       )}
 
-      {/* Main Table matching tela 1.png */}
-      <div className="bg-[#0b0d13] border border-[#1b1f2e] rounded-2xl overflow-hidden shadow-2xl">
+      {/* Main Table - Amplo, Responsivo e Sem Rolagem Excessiva */}
+      <div className="tech-card rounded-3xl overflow-hidden shadow-2xl border border-[#1b1f2e]">
         <div className="overflow-x-auto">
-          <table className="w-full text-left border-collapse text-xs">
+          <table className="w-full text-left border-collapse text-xs table-auto">
             {/* Table Header */}
             <thead>
-              <tr className="border-b border-[#1b1f2e] bg-[#0e1017] text-gray-400 font-semibold tracking-wider uppercase text-[11px]">
-                <th className="py-3.5 px-4 w-10 text-center">
+              <tr className="border-b border-[#1b1f2e] bg-[#0c0e16] text-gray-400 font-semibold tracking-wider uppercase text-[11px]">
+                <th className="py-3 px-3 w-10 text-center">
                   <button
                     onClick={handleSelectAll}
                     className="text-gray-400 hover:text-white"
@@ -376,44 +621,43 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                     )}
                   </button>
                 </th>
-                <th className="py-3.5 px-3 min-w-[160px]">Cliente</th>
-                <th className="py-3.5 px-3 min-w-[130px]">Contato</th>
-                <th className="py-3.5 px-3 min-w-[150px]">MAC / Senha</th>
-                <th className="py-3.5 px-3 min-w-[100px]">Servidor</th>
-                <th className="py-3.5 px-3 min-w-[130px]">App</th>
-                <th className="py-3.5 px-3 text-center min-w-[90px]">App Pago</th>
-                <th className="py-3.5 px-3 text-center min-w-[90px]">Plano</th>
-                <th className="py-3.5 px-3 min-w-[90px]">Valor</th>
-                <th className="py-3.5 px-3 min-w-[140px]">Vencimento</th>
-                <th className="py-3.5 px-3 min-w-[110px]">Status</th>
-                <th className="py-3.5 px-4 text-right min-w-[130px]">Ações</th>
+                <th className="py-3 px-3 w-[26%] min-w-[210px]">Cliente & Contato</th>
+                <th className="py-3 px-3 w-[26%] min-w-[210px]">Acesso & Servidor IPTV</th>
+                <th className="py-3 px-3 w-[18%] min-w-[150px]">Plano & Vencimento</th>
+                <th className="py-3 px-3 w-[12%] min-w-[100px] text-center">Status</th>
+                <th className="py-3 px-3 w-[18%] min-w-[170px] text-right">Ações</th>
               </tr>
             </thead>
 
-            {/* Table Body */}
+            {/* Table Body com Zebra Striping */}
             <tbody className="divide-y divide-[#151824]">
               {paginatedClients.length === 0 ? (
                 <tr>
-                  <td colSpan={12} className="py-12 text-center text-gray-500">
-                    Nenhum cliente encontrado com os filtros atuais.
+                  <td colSpan={6} className="py-14 text-center text-gray-500">
+                    Nenhum cliente encontrado com os filtros selecionados.
                   </td>
                 </tr>
               ) : (
-                paginatedClients.map(client => {
+                paginatedClients.map((client, index) => {
                   const isSelected = selectedIds.includes(client.id);
                   const isOverdue = client.status === 'Em atraso';
                   const isDueSoon = client.status === 'Vencendo (7d)';
                   const isPasswordRevealed = revealedPasswords[client.id];
+                  const bdayInfo = getClientBirthdayInfo(client.dataNascimento);
+                  const isEven = index % 2 === 0;
+                  const zebraBg = isSelected
+                    ? 'bg-red-950/40 border-l-4 border-l-red-500'
+                    : isEven
+                    ? 'bg-[#080911]'
+                    : 'bg-[#10131f]';
 
                   return (
                     <tr
                       key={client.id}
-                      className={`hover:bg-[#121522]/80 transition-colors ${
-                        isSelected ? 'bg-[#181119]' : ''
-                      }`}
+                      className={`${zebraBg} hover:bg-[#181d2f] transition-colors border-b border-[#161a29]`}
                     >
-                      {/* Checkbox */}
-                      <td className="py-3.5 px-4 text-center">
+                      {/* 1. Checkbox */}
+                      <td className="py-3 px-3 text-center align-middle">
                         <button
                           onClick={() => handleSelectRow(client.id)}
                           className="text-gray-400 hover:text-white"
@@ -426,164 +670,276 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                         </button>
                       </td>
 
-                      {/* Cliente */}
-                      <td className="py-3.5 px-3">
-                        <div className="flex items-center gap-2.5">
-                          <div className="w-8 h-8 rounded-full bg-[#171a26] border border-[#23293c] text-white font-bold text-xs flex items-center justify-center shrink-0 overflow-hidden">
-                            {client.nome.toLowerCase() === 'comercial' ? (
-                              <img src="/logo.svg" alt="logo" className="w-6 h-6 object-contain" />
-                            ) : (
-                              client.nome.substring(0, 2).toUpperCase()
-                            )}
-                          </div>
-                          <span
-                            onClick={() => onOpenClient(client)}
-                            className="font-bold text-gray-200 hover:text-red-400 cursor-pointer truncate max-w-[150px]"
-                            title={client.nome}
+                      {/* 2. Cliente & Contato */}
+                      <td className="py-3 px-3 align-middle">
+                        <div className="flex items-center gap-3">
+                          {/* Circular Avatar / Custom Photo */}
+                          <div
+                            onClick={() => handleOpenPhotoPicker(client.id)}
+                            className="w-10 h-10 rounded-full bg-[#151824] border border-red-600/70 text-white font-bold text-xs flex items-center justify-center shrink-0 overflow-hidden relative group cursor-pointer shadow-[0_0_10px_rgba(220,38,38,0.25)]"
+                            title="Clique para alterar a foto do cliente"
                           >
-                            {client.nome}
-                          </span>
+                            {client.fotoUrl ? (
+                              <img src={client.fotoUrl} alt={client.nome} className="w-full h-full object-cover" />
+                            ) : client.nome.toLowerCase() === 'comercial' ? (
+                              <img src="/logo.png" alt="logo" className="w-full h-full object-contain p-0.5" />
+                            ) : (
+                              <span className="font-display font-extrabold text-sm">{client.nome.substring(0, 2).toUpperCase()}</span>
+                            )}
+                            {/* Hover overlay to change photo */}
+                            <div className="absolute inset-0 bg-black/75 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                              <Camera size={13} className="text-white" />
+                            </div>
+                          </div>
+
+                          <div className="min-w-0 space-y-1">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span
+                                onClick={() => onOpenClient(client)}
+                                className="font-bold text-gray-100 hover:text-red-400 cursor-pointer truncate max-w-[150px] text-xs"
+                                title={client.nome}
+                              >
+                                {client.nome}
+                              </span>
+                              <button
+                                onClick={() => copyClientField('Nome', client.nome)}
+                                className="text-gray-500 hover:text-red-400 p-0.5"
+                                title="Copiar Nome"
+                              >
+                                <Copy size={11} />
+                              </button>
+
+                              {/* Birthday Badge */}
+                              {bdayInfo?.isToday && (
+                                <span className="inline-flex items-center gap-1 text-[10px] px-2 py-0.2 rounded-full font-bold bg-pink-950/90 text-pink-300 border border-pink-600/70 shadow-[0_0_8px_rgba(244,114,182,0.4)] animate-pulse" title="Aniversário Hoje!">
+                                  <Cake size={11} /> Hoje!
+                                </span>
+                              )}
+                              {bdayInfo && !bdayInfo.isToday && bdayInfo.isThisWeek && (
+                                <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.2 rounded-full font-bold bg-amber-950/80 text-amber-300 border border-amber-600/50" title={`Aniversário em ${bdayInfo.daysUntil} dias (${bdayInfo.dataTexto})`}>
+                                  <Cake size={10} /> {bdayInfo.daysUntil}d
+                                </span>
+                              )}
+
+                              {/* Inactive tag */}
+                              {client.arquivado && (
+                                <span className="text-[10px] bg-amber-950/70 text-amber-400 border border-amber-700/50 px-1.5 py-0.2 rounded font-mono-code font-bold">
+                                  Inativo
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-2 text-[11px] text-gray-400">
+                              <div className="flex items-center gap-1 font-mono-code">
+                                <span className="text-gray-300">{client.whatsapp || client.celular || '—'}</span>
+                                {client.whatsapp && (
+                                  <button
+                                    onClick={() => copyClientField('WhatsApp', client.whatsapp)}
+                                    className="text-gray-500 hover:text-red-400 p-0.5"
+                                    title="Copiar WhatsApp"
+                                  >
+                                    <Copy size={11} />
+                                  </button>
+                                )}
+                              </div>
+                              {client.usuarioDisp && (
+                                <span className="text-[10px] text-gray-500 font-mono-code truncate max-w-[100px]">
+                                  @{client.usuarioDisp}
+                                </span>
+                              )}
+                            </div>
+                          </div>
                         </div>
                       </td>
 
-                      {/* Contato (WhatsApp) */}
-                      <td className="py-3.5 px-3 font-mono-code text-gray-300">
-                        {client.whatsapp || client.celular || '—'}
-                      </td>
-
-                      {/* MAC / Senha */}
-                      <td className="py-3.5 px-3 font-mono-code">
-                        {client.mac ? (
-                          <div className="space-y-0.5">
-                            <div className="flex items-center gap-1.5 text-gray-300">
-                              <span>{client.mac}</span>
+                      {/* 3. Acesso & Servidor IPTV */}
+                      <td className="py-3 px-3 align-middle font-mono-code">
+                        <div className="space-y-1.5">
+                          {/* Servidor + App */}
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#161a29] text-gray-300 border border-[#23293e] text-[10px] font-semibold">
+                              <span>{client.servidor || 'Cine Hub'}</span>
                               <button
-                                onClick={() => copyToClipboard(client.mac, `mac-${client.id}`)}
-                                className="text-gray-500 hover:text-gray-300"
-                                title="Copiar MAC"
+                                onClick={() => copyClientField('Servidor', client.servidor)}
+                                className="text-gray-500 hover:text-red-400"
+                                title="Copiar Servidor"
                               >
-                                {copiedField === `mac-${client.id}` ? <Check size={12} className="text-emerald-400" /> : <Copy size={12} />}
+                                <Copy size={10} />
                               </button>
-                            </div>
-                            {client.senhaMac && (
-                              <div className="flex items-center gap-1.5 text-[11px] text-amber-400/90">
-                                <Key size={11} className="text-amber-500" />
-                                <span>{isPasswordRevealed ? client.senhaMac : '••••••'}</span>
+                            </span>
+
+                            {client.aplicativo && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-[#131622] text-gray-300 border border-[#1f2436] text-[10px]">
+                                <span className="truncate max-w-[90px]">{client.aplicativo}</span>
                                 <button
-                                  onClick={() => togglePasswordVisibility(client.id)}
-                                  className="text-gray-500 hover:text-gray-300 text-[10px]"
-                                  title={isPasswordRevealed ? 'Ocultar' : 'Revelar'}
+                                  onClick={() => copyClientField('Aplicativo', client.aplicativo)}
+                                  className="text-gray-500 hover:text-red-400"
+                                  title="Copiar Aplicativo"
                                 >
-                                  {isPasswordRevealed ? 'ocultar' : 'ver'}
+                                  <Copy size={10} />
                                 </button>
-                              </div>
+                              </span>
+                            )}
+
+                            {client.appPago && (
+                              <span className="px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-400 border border-emerald-800/60 font-semibold text-[9px]">
+                                Pago
+                              </span>
                             )}
                           </div>
-                        ) : (
-                          <span className="text-gray-600">—</span>
-                        )}
-                      </td>
 
-                      {/* Servidor */}
-                      <td className="py-3.5 px-3">
-                        <span className="px-2.5 py-1 rounded-md bg-[#161a28] text-gray-300 border border-[#23293c] text-[11px] font-semibold whitespace-nowrap">
-                          {client.servidor || 'Cine Hub'}
-                        </span>
-                      </td>
+                          {/* MAC & Senha */}
+                          {client.mac ? (
+                            <div className="flex items-center gap-2 flex-wrap text-[11px]">
+                              <div className="flex items-center gap-1 text-gray-300">
+                                <span>{client.mac}</span>
+                                <button
+                                  onClick={() => copyClientField('Endereço MAC', client.mac)}
+                                  className="text-gray-500 hover:text-red-400"
+                                  title="Copiar MAC"
+                                >
+                                  <Copy size={10} />
+                                </button>
+                              </div>
 
-                      {/* Aplicativo */}
-                      <td className="py-3.5 px-3 text-gray-300 truncate max-w-[130px]" title={client.aplicativo}>
-                        {client.aplicativo || '—'}
-                      </td>
-
-                      {/* App Pago */}
-                      <td className="py-3.5 px-3 text-center">
-                        {client.appPago ? (
-                          <span className="px-2.5 py-0.5 rounded-full bg-emerald-950/80 text-emerald-400 border border-emerald-800/50 font-semibold text-[10px]">
-                            Pago
-                          </span>
-                        ) : (
-                          <span className="text-gray-600">—</span>
-                        )}
-                      </td>
-
-                      {/* Plano */}
-                      <td className="py-3.5 px-3 text-center">
-                        <span className="px-2.5 py-1 rounded-md bg-[#181a24] text-gray-300 border border-[#272b3c] text-[11px] font-medium">
-                          {client.plano || 'Mensal'}
-                        </span>
-                      </td>
-
-                      {/* Valor */}
-                      <td className="py-3.5 px-3 font-semibold text-gray-200 font-mono-code">
-                        R$ {Number(client.valor || 20).toFixed(2)}
-                      </td>
-
-                      {/* Vencimento + Days diff badge */}
-                      <td className="py-3.5 px-3">
-                        <div className="space-y-0.5">
-                          <div className="font-mono-code text-gray-200">
-                            {client.vencimento || '—'}
-                          </div>
-                          {client.vencimento && (
-                            <div className={`text-[10px] font-semibold ${
-                              isOverdue ? 'text-red-400' : isDueSoon ? 'text-amber-400' : 'text-emerald-400'
-                            }`}>
-                              {calculateDaysText(client.vencimento)}
+                              {client.senhaMac && (
+                                <div className="flex items-center gap-1 text-[10px] text-amber-400/90">
+                                  <Key size={10} className="text-amber-500" />
+                                  <span>{isPasswordRevealed ? client.senhaMac : '••••'}</span>
+                                  <button
+                                    onClick={() => togglePasswordVisibility(client.id)}
+                                    className="text-gray-500 hover:text-gray-300 text-[9px] underline"
+                                  >
+                                    {isPasswordRevealed ? 'ocultar' : 'ver'}
+                                  </button>
+                                  <button
+                                    onClick={() => copyClientField('Senha MAC', client.senhaMac)}
+                                    className="text-gray-500 hover:text-red-400"
+                                    title="Copiar Senha MAC"
+                                  >
+                                    <Copy size={10} />
+                                  </button>
+                                </div>
+                              )}
                             </div>
+                          ) : (
+                            <span className="text-gray-600 text-[10px] font-sans">Sem MAC cadastrado</span>
                           )}
                         </div>
                       </td>
 
-                      {/* Status */}
-                      <td className="py-3.5 px-3">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold border ${
-                          client.status === 'Em dia'
-                            ? 'bg-emerald-950/70 text-emerald-400 border-emerald-800/50'
-                            : client.status === 'Em atraso'
-                            ? 'bg-red-950/70 text-red-400 border-red-800/50'
-                            : client.status === 'Vencendo (7d)'
-                            ? 'bg-amber-950/70 text-amber-400 border-amber-800/50'
-                            : 'bg-gray-900 text-gray-400 border-gray-700'
-                        }`}>
-                          {client.status}
-                        </span>
+                      {/* 4. Plano & Vencimento */}
+                      <td className="py-3 px-3 align-middle">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2">
+                            <span className="px-2 py-0.5 rounded-md bg-[#181a26] text-gray-300 border border-[#272b3e] text-[10px] font-medium">
+                              {client.plano || 'Mensal'}
+                            </span>
+                            <span className="font-semibold text-gray-100 font-mono-code text-xs">
+                              R$ {Number(client.valor || 20).toFixed(2)}
+                            </span>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="font-mono-code text-gray-300 text-[11px]">
+                              {client.vencimento || '—'}
+                            </span>
+                            {client.vencimento && (
+                              <span className={`text-[10px] font-semibold px-1.5 py-0.2 rounded-full ${
+                                isOverdue
+                                  ? 'bg-red-950/80 text-red-400 border border-red-800/60'
+                                  : isDueSoon
+                                  ? 'bg-amber-950/80 text-amber-300 border border-amber-800/60'
+                                  : 'bg-emerald-950/60 text-emerald-400 border border-emerald-900/40'
+                              }`}>
+                                {calculateDaysText(client.vencimento)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
                       </td>
 
-                      {/* Ações (Matching tela 1.png icons: WhatsApp, Eye, Pencil, Trash) */}
-                      <td className="py-3.5 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
+                      {/* 5. Status */}
+                      <td className="py-3 px-3 align-middle text-center">
+                        <button
+                          onClick={() => toggleClientStatus(client.id)}
+                          className={`inline-flex items-center justify-center px-3 py-1 rounded-full text-[11px] font-bold border transition-all ${
+                            client.status === 'Em dia'
+                              ? 'bg-emerald-950/70 text-emerald-400 border-emerald-700/60 shadow-[0_0_10px_rgba(16,185,129,0.25)] hover:border-emerald-500'
+                              : client.status === 'Em atraso'
+                              ? 'bg-red-950/70 text-red-400 border-red-700/60 shadow-[0_0_10px_rgba(220,38,38,0.25)] hover:border-red-500'
+                              : client.status === 'Vencendo (7d)'
+                              ? 'bg-amber-950/70 text-amber-400 border-amber-700/60 shadow-[0_0_10px_rgba(245,158,11,0.25)] hover:border-amber-500'
+                              : 'bg-gray-900 text-gray-400 border-gray-700'
+                          }`}
+                          title="Clique para alternar status (Ativar / Suspender)"
+                        >
+                          <span>{client.status}</span>
+                        </button>
+                      </td>
+
+                      {/* 6. Ações */}
+                      <td className="py-3 px-3 align-middle text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {/* Copiar Ficha Completa */}
+                          <button
+                            onClick={() => copyClientFullCredentials(client)}
+                            className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-[#1a1d2d] transition-colors"
+                            title="Copiar Ficha Completa do Cliente"
+                          >
+                            <Copy size={14} />
+                          </button>
+
                           {/* WhatsApp Billing Reminder */}
                           <button
                             onClick={() => sendWhatsAppReminder(client)}
-                            className="p-1.5 rounded-lg text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/50 transition-colors"
-                            title="Enviar cobrança via WhatsApp"
+                            className="p-1.5 rounded-lg text-emerald-400 hover:text-emerald-300 hover:bg-emerald-950/60 transition-colors"
+                            title="Cobrar via WhatsApp com mensagem personalizada"
                           >
                             <MessageCircle size={15} />
                           </button>
 
-                          {/* Quick View */}
+                          {/* Quick View / Edit */}
                           <button
                             onClick={() => onOpenClient(client)}
-                            className="p-1.5 rounded-lg text-blue-400 hover:text-blue-300 hover:bg-blue-950/50 transition-colors"
-                            title="Visualizar ficha completa"
+                            className="p-1.5 rounded-lg text-blue-400 hover:text-blue-300 hover:bg-blue-950/60 transition-colors"
+                            title="Abrir ficha cadastral completa"
                           >
                             <Eye size={15} />
                           </button>
 
-                          {/* Quick Edit */}
+                          {/* Alarme no celular (.ics) */}
                           <button
-                            onClick={() => onEditClient(client)}
-                            className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-[#1a1d2d] transition-colors"
-                            title="Editar cadastro"
+                            onClick={() => downloadClientAlarmCalendarFile(client)}
+                            className="p-1.5 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-950/60 transition-colors"
+                            title="Adicionar Alarme / Lembrete no Calendário do Celular (.ics)"
                           >
-                            <Edit2 size={15} />
+                            <AlarmClock size={15} />
                           </button>
+
+                          {/* Arquivar / Desarquivar */}
+                          {client.arquivado ? (
+                            <button
+                              onClick={() => unarchiveClient(client.id)}
+                              className="p-1.5 rounded-lg text-amber-400 hover:text-amber-300 hover:bg-amber-950/60 transition-colors"
+                              title="Reativar cliente (mover para Clientes Ativos)"
+                            >
+                              <ArchiveRestore size={15} />
+                            </button>
+                          ) : (
+                            <button
+                              onClick={() => archiveClient(client.id)}
+                              className="p-1.5 rounded-lg text-gray-400 hover:text-amber-400 hover:bg-amber-950/50 transition-colors"
+                              title="Mover cliente para pasta Cliente inativos"
+                            >
+                              <Archive size={15} />
+                            </button>
+                          )}
 
                           {/* Delete */}
                           <button
                             onClick={() => handleDeleteOne(client)}
-                            className="p-1.5 rounded-lg text-red-500 hover:text-red-400 hover:bg-red-950/50 transition-colors"
+                            className="p-1.5 rounded-lg text-red-500 hover:text-red-400 hover:bg-red-950/60 transition-colors"
                             title="Excluir cliente"
                           >
                             <Trash2 size={15} />
@@ -598,8 +954,8 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
           </table>
         </div>
 
-        {/* Table Footer / Pagination */}
-        <div className="border-t border-[#1b1f2e] bg-[#0e1017] px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-400">
+        {/* Pagination Footer */}
+        <div className="border-t border-[#1b1f2e] bg-[#0c0e16] px-4 py-3 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-gray-400">
           <div className="flex items-center gap-3">
             <span>
               Mostrando {Math.min(filteredClients.length, (currentPage - 1) * rowsPerPage + 1)} a{' '}
@@ -607,7 +963,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
             </span>
 
             <div className="flex items-center gap-1.5">
-              <span>Linhas por página:</span>
+              <span>Por página:</span>
               <select
                 value={rowsPerPage}
                 onChange={(e) => {
@@ -646,12 +1002,143 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
         </div>
       </div>
 
+      {/* INTEGRATED IMPORT MODAL (Inside Clientes) */}
+      {showImportModal && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="tech-card border border-red-950/80 rounded-3xl max-w-2xl w-full p-6 space-y-5 shadow-2xl animate-in fade-in">
+            <div className="flex items-center justify-between pb-3 border-b border-[#1b1f2e]">
+              <div className="flex items-center gap-2.5 text-white font-display font-bold text-lg">
+                <FileSpreadsheet size={20} className="text-red-500" />
+                <span>Importar Planilha de Clientes</span>
+              </div>
+              <button
+                onClick={() => {
+                  setShowImportModal(false);
+                  setImportFile(null);
+                  setImportResult(null);
+                }}
+                className="text-gray-400 hover:text-white"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <p className="text-xs text-gray-300 leading-relaxed">
+                Suporta o arquivo <strong>clientes-1792279062638.xlsx</strong> com as 18 colunas originais (Nome, WhatsApp, Servidor, MAC, Senha, Plano, Vencimento, etc.).
+              </p>
+
+              {/* Upload Drop area */}
+              <div className="border-2 border-dashed border-[#262c3e] hover:border-red-600/70 rounded-2xl p-6 text-center space-y-3 bg-[#090b11]">
+                <UploadCloud size={32} className="mx-auto text-red-500" />
+                <div>
+                  <span className="font-semibold text-xs text-white block">
+                    {importFile ? importFile.name : 'Selecione ou arraste a planilha'}
+                  </span>
+                  <span className="text-[11px] text-gray-500">Formatos aceitos: .xlsx, .xls, .csv</span>
+                </div>
+
+                <div className="flex items-center justify-center gap-2 pt-1">
+                  <label className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white font-bold text-xs cursor-pointer shadow-[0_0_12px_rgba(220,38,38,0.4)]">
+                    <FileSpreadsheet size={14} />
+                    <span>Escolher Arquivo</span>
+                    <input
+                      type="file"
+                      accept=".xlsx,.xls,.csv"
+                      onChange={handleImportFileChange}
+                      className="hidden"
+                    />
+                  </label>
+
+                  <button
+                    type="button"
+                    onClick={downloadSampleExcelTemplate}
+                    className="px-3 py-2 rounded-xl bg-[#141724] hover:bg-[#1d2235] text-gray-300 text-xs font-semibold border border-[#23293c]"
+                  >
+                    Baixar Modelo
+                  </button>
+                </div>
+              </div>
+
+              {/* Preview Result */}
+              {importResult && (
+                <div className="space-y-3 bg-[#0d0f17] border border-[#1b1f2e] rounded-2xl p-4">
+                  <div className="flex items-center justify-between text-xs font-semibold">
+                    <span className="text-white">Linhas detectadas: {importResult.totalRows}</span>
+                    <span className="text-amber-400">Duplicidades: {importResult.duplicatesCount}</span>
+                    <span className="text-emerald-400">Válidos: {importResult.validRows.length}</span>
+                  </div>
+
+                  <div className="space-y-1 text-xs">
+                    <span className="font-semibold text-gray-400 block">Modo de Importação:</span>
+                    <div className="grid grid-cols-3 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setImportMode('append')}
+                        className={`py-2 px-2.5 rounded-xl border text-xs font-semibold ${
+                          importMode === 'append' ? 'bg-red-950/80 border-red-600 text-white' : 'bg-[#121522] border-[#222738] text-gray-400'
+                        }`}
+                      >
+                        Cadastrar Novos
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setImportMode('update')}
+                        className={`py-2 px-2.5 rounded-xl border text-xs font-semibold ${
+                          importMode === 'update' ? 'bg-red-950/80 border-red-600 text-white' : 'bg-[#121522] border-[#222738] text-gray-400'
+                        }`}
+                      >
+                        Atualizar Existentes
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setImportMode('replace')}
+                        className={`py-2 px-2.5 rounded-xl border text-xs font-semibold ${
+                          importMode === 'replace' ? 'bg-red-950/80 border-red-600 text-white' : 'bg-[#121522] border-[#222738] text-gray-400'
+                        }`}
+                      >
+                        Substituir Base
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowImportModal(false);
+                  setImportFile(null);
+                  setImportResult(null);
+                }}
+                className="px-4 py-2 rounded-xl bg-[#171a26] text-gray-300 text-xs font-semibold"
+              >
+                Cancelar
+              </button>
+
+              {importResult && (
+                <button
+                  type="button"
+                  onClick={handleConfirmImport}
+                  disabled={importParsing}
+                  className="px-5 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-[0_0_15px_rgba(220,38,38,0.5)] transition-all"
+                >
+                  Confirmar e Importar
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Clear All Modal Confirmation */}
       {showClearConfirm && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-[#12141f] border border-red-900/60 rounded-2xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="tech-card border border-red-900/80 rounded-3xl max-w-md w-full p-6 space-y-4 shadow-2xl">
             <div className="flex items-center gap-3 text-red-500">
-              <div className="p-3 bg-red-950/80 rounded-xl border border-red-800">
+              <div className="p-3 bg-red-950/80 rounded-2xl border border-red-800">
                 <AlertTriangle size={24} />
               </div>
               <h3 className="font-display text-lg font-bold text-white">
@@ -661,7 +1148,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
 
             <p className="text-xs text-gray-300 leading-relaxed">
               Esta ação removerá todos os {clients.length} clientes da base de dados.
-              Você poderá desfazer a alteração imediatamente através do botão <strong>Desfazer</strong> no cabeçalho ou restaurar um backup.
+              Você poderá desfazer a alteração imediatamente através do botão <strong>Desfazer</strong> no cabeçalho ou importar novamente.
             </p>
 
             <div className="flex items-center justify-end gap-2.5 pt-2">
@@ -673,7 +1160,7 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
               </button>
               <button
                 onClick={handleClearAll}
-                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-[0_0_12px_#dc2626]"
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-[0_0_15px_#dc2626]"
               >
                 Sim, Limpar Todos
               </button>

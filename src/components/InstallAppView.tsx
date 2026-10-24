@@ -36,7 +36,6 @@ export const InstallAppView: React.FC = () => {
   }, []);
 
   const handleInstallClick = async () => {
-    playSound('sino');
     if (deferredPrompt) {
       await deferredPrompt.prompt();
       const choice = await deferredPrompt.userChoice;

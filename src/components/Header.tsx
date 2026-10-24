@@ -56,7 +56,6 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu, onOpenProfil
   }, []);
 
   const handleRefresh = async () => {
-    playSound('beep');
     await refreshData();
   };
 

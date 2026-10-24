@@ -4,8 +4,6 @@ import {
   Users,
   Banknote,
   Zap,
-  BarChart2,
-  UploadCloud,
   Download,
   Settings,
   LogOut,
@@ -29,21 +27,18 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setMobileOpen,
   onLogout
 }) => {
-  const { activeTab, setActiveTab, settings, playSound } = useApp();
+  const { activeTab, setActiveTab, settings, playSound, clients } = useApp();
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'clientes', label: 'Clientes', icon: Users },
     { id: 'cobrancas', label: 'Cobranças', icon: Banknote },
     { id: 'automacoes', label: 'Automações', icon: Zap },
-    { id: 'graficos', label: 'Gráficos', icon: BarChart2 },
-    { id: 'importacao', label: 'Importação', icon: UploadCloud },
     { id: 'baixar-app', label: 'Baixar App', icon: Download },
     { id: 'configuracoes', label: 'Configurações', icon: Settings },
   ];
 
   const handleSelect = (id: string) => {
-    playSound('beep');
     setActiveTab(id);
     if (mobileOpen) setMobileOpen(false);
   };
@@ -67,11 +62,11 @@ export const Sidebar: React.FC<SidebarProps> = ({
         {/* Brand Header */}
         <div className="h-20 flex items-center px-4 border-b border-[#161824] justify-between">
           <div className="flex items-center gap-3 overflow-hidden cursor-pointer" onClick={() => handleSelect('dashboard')}>
-            <div className="w-11 h-11 shrink-0 rounded-full p-0.5 relative group">
+            <div className="w-12 h-12 shrink-0 relative group flex items-center justify-center">
               <img
-                src={settings.logoUrl || '/logo.svg'}
+                src={settings.logoUrl || '/logo.png'}
                 alt="Gerenciapró Movieplay"
-                className="w-full h-full object-contain filter drop-shadow-[0_2px_8px_rgba(220,38,38,0.4)] transition-transform group-hover:scale-105"
+                className="w-full h-full object-contain filter drop-shadow-[0_0_12px_rgba(220,38,38,0.45)] transition-transform group-hover:scale-105"
               />
             </div>
             {!collapsed && (
@@ -130,7 +125,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {/* Badge for Alert or Pending (e.g. for Clientes) */}
                 {!collapsed && item.id === 'clientes' && (
                   <span className="ml-auto text-[11px] bg-red-950/70 text-red-400 border border-red-800/40 px-2 py-0.5 rounded-full font-mono-code font-bold">
-                    28
+                    {clients.length}
                   </span>
                 )}
               </button>

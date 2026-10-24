@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
@@ -16,7 +16,7 @@ import { LoginView } from './components/LoginView';
 import { Client } from './types';
 
 function MainApp() {
-  const { activeTab, setActiveTab } = useApp();
+  const { activeTab, setActiveTab, clients, toastMessage, activeClientIdToOpen, setActiveClientIdToOpen } = useApp();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -29,6 +29,19 @@ function MainApp() {
 
   // Profile Modal
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+
+  // Auto-open client modal if deep-linked or routed via activeClientIdToOpen
+  useEffect(() => {
+    if (activeClientIdToOpen) {
+      const target = clients.find(c => c.id === activeClientIdToOpen);
+      if (target) {
+        setSelectedClient(target);
+        setClientModalMode('view');
+        setIsClientModalOpen(true);
+      }
+      setActiveClientIdToOpen(null);
+    }
+  }, [activeClientIdToOpen, clients, setActiveClientIdToOpen]);
 
   const handleOpenClient = (client: Client) => {
     setSelectedClient(client);
@@ -82,7 +95,7 @@ function MainApp() {
         />
 
         {/* Content View */}
-        <main className="flex-1 p-4 md:p-8 max-w-7xl w-full mx-auto">
+        <main className={`flex-1 p-3 sm:p-5 md:p-6 w-full mx-auto transition-all ${activeTab === 'clientes' ? 'max-w-[1780px]' : 'max-w-7xl'}`}>
           {activeTab === 'dashboard' && (
             <DashboardView
               onOpenClient={handleOpenClient}
@@ -126,6 +139,14 @@ function MainApp() {
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
       />
+
+      {/* Futuristic Neon Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-4 py-2.5 bg-[#0e1017]/95 border border-red-500/60 shadow-[0_0_25px_rgba(220,38,38,0.4)] rounded-xl text-white text-sm font-medium backdrop-blur-md pointer-events-none animate-in fade-in slide-in-from-bottom-3 duration-200">
+          <span className="w-2.5 h-2.5 rounded-full bg-red-500 shadow-[0_0_8px_#ef4444] animate-pulse" />
+          <span className="tracking-wide">{toastMessage}</span>
+        </div>
+      )}
     </div>
   );
 }

@@ -105,13 +105,11 @@ export const SettingsView: React.FC = () => {
 
   const handleDevUnlock = (e: React.FormEvent) => {
     e.preventDefault();
-    if (devPassword === 'admin123') {
+    if (devPassword === 'Senhacontrahacker1!') {
       setDevUnlocked(true);
       setDevError(false);
-      playSound('sino');
     } else {
       setDevError(true);
-      playSound('urgente');
     }
   };
 
@@ -168,9 +166,9 @@ export const SettingsView: React.FC = () => {
 
         <div className="flex items-center gap-5 pt-2">
           {/* Logo preview with red glow */}
-          <div className="w-16 h-16 rounded-full bg-[#140b10] border border-red-900/60 p-1 flex items-center justify-center shrink-0 shadow-[0_0_15px_rgba(220,38,38,0.25)]">
+          <div className="w-16 h-16 flex items-center justify-center shrink-0 filter drop-shadow-[0_0_15px_rgba(220,38,38,0.4)]">
             <img
-              src={settings.logoUrl || '/logo.svg'}
+              src={settings.logoUrl || '/logo.png'}
               alt="Logo"
               className="w-full h-full object-contain"
             />
@@ -416,10 +414,10 @@ export const SettingsView: React.FC = () => {
           </div>
           <div>
             <h2 className="font-display text-base font-bold text-white tracking-wide">
-              Gestão de Planos & Links
+              Gestão de Planos
             </h2>
             <p className="text-xs text-gray-400">
-              Configure seus planos e vincule links de pagamento específicos.
+              Configure os planos disponíveis. Links de pagamento e chaves Pix são gerenciados exclusivamente na aba <strong className="text-red-400">Cobranças</strong>.
             </p>
           </div>
         </div>
@@ -441,63 +439,43 @@ export const SettingsView: React.FC = () => {
           </button>
         </form>
 
-        <div className="space-y-4 pt-3">
+        <div className="space-y-3 pt-3">
           {plans.map(p => (
             <div
               key={p.id}
-              className="bg-[#10131d] border border-[#1f2436] rounded-2xl p-4 space-y-3"
+              className="bg-[#10131d] border border-[#1f2436] rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
             >
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className="px-3 py-1 rounded-lg bg-red-600 text-white font-bold text-xs">
-                    {p.nome}
-                  </span>
-                  <span className="text-[11px] text-gray-500 italic">(Padrão)</span>
+              <div className="flex items-center gap-3">
+                <span className="px-3 py-1 rounded-lg bg-red-600 text-white font-bold text-xs shadow-sm">
+                  {p.nome}
+                </span>
+                <div className="text-xs text-gray-400">
+                  <span>Duração: <strong className="text-white">{p.duracaoMeses} {p.duracaoMeses === 1 ? 'mês' : 'meses'}</strong></span>
+                  <span className="mx-2">•</span>
+                  <span>Valor padrão: <strong className="text-emerald-400">R$ {Number(p.valorPadrao).toFixed(2)}</strong></span>
                 </div>
+              </div>
 
+              <div className="flex items-center gap-2 self-end sm:self-auto">
+                <span className="text-[11px] text-gray-500 italic hidden md:inline">
+                  Links na aba Cobranças
+                </span>
                 <button
                   onClick={() => {
                     if (confirm(`Remover plano ${p.nome}?`)) deletePlan(p.id);
                   }}
-                  className="text-gray-500 hover:text-red-400 p-1"
+                  className="text-gray-500 hover:text-red-400 p-1.5 rounded-lg hover:bg-[#1a1e2e] transition-colors"
+                  title="Remover plano"
                 >
                   <Trash2 size={16} />
                 </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-[11px] text-gray-400 font-semibold mb-1 flex items-center gap-1">
-                    <span>LINK DE COBRANÇA</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={p.linkCobranca || ''}
-                    onChange={e => updatePlan(p.id, { linkCobranca: e.target.value })}
-                    placeholder="https://link-de-pagamento.com/..."
-                    className="w-full bg-[#0a0c12] border border-[#1d2232] rounded-xl px-3 py-2 text-xs text-white font-mono-code outline-none focus:border-red-600"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[11px] text-gray-400 font-semibold mb-1 flex items-center gap-1">
-                    <span>CHAVE PIX (COPIA E COLA)</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={p.chavePix || ''}
-                    onChange={e => updatePlan(p.id, { chavePix: e.target.value })}
-                    placeholder="Chave Pix ou Código Copia e Cola"
-                    className="w-full bg-[#0a0c12] border border-[#1d2232] rounded-xl px-3 py-2 text-xs text-white font-mono-code outline-none focus:border-red-600"
-                  />
-                </div>
               </div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* 7. Área do Desenvolvedor — Exportar App em HTML Único (matching tela5..png) */}
+      {/* 7. Área do Desenvolvedor — Visualizar Código & Exportar */}
       <div className="bg-[#0c0e15] border border-[#1b1f2e] rounded-2xl p-5 md:p-6 space-y-4">
         <div className="flex items-center gap-2.5">
           <div className="p-2 bg-[#1b2030] rounded-xl border border-[#2b334d] text-gray-300">
@@ -505,10 +483,10 @@ export const SettingsView: React.FC = () => {
           </div>
           <div>
             <h2 className="font-display text-base font-bold text-white tracking-wide">
-              Área do Desenvolvedor — Exportar App em HTML Único
+              Área do Desenvolvedor — Visualizar Código & Exportar
             </h2>
             <p className="text-xs text-gray-400">
-              Snapshot monolítico (HTML + Tailwind inline) para hospedagem estática. Senha padrão: admin123
+              Acesso protegido para inspeção de código-fonte, banco de dados e exportação de snapshot monolítico.
             </p>
           </div>
         </div>
@@ -517,7 +495,7 @@ export const SettingsView: React.FC = () => {
           <form onSubmit={handleDevUnlock} className="space-y-3 pt-2 max-w-md">
             <div>
               <label className="block text-xs font-semibold text-gray-400 mb-1.5">
-                Senha de acesso
+                Senha de acesso ao código
               </label>
               <div className="flex gap-2.5">
                 <input
@@ -527,34 +505,58 @@ export const SettingsView: React.FC = () => {
                     setDevPassword(e.target.value);
                     setDevError(false);
                   }}
-                  placeholder="••••••••"
+                  placeholder="Digite a senha..."
                   className="flex-1 bg-[#121522] border border-[#23293c] focus:border-red-600 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none font-mono-code"
                 />
                 <button
                   type="submit"
                   className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-all shadow-[0_0_12px_#dc2626]"
                 >
-                  Entrar
+                  Acessar Código
                 </button>
               </div>
             </div>
 
             {devError && (
               <p className="text-xs font-semibold text-red-500 flex items-center gap-1.5">
-                <span>⛔ Acesso Negado</span>
+                <span>⛔ Senha incorreta. Acesso negado.</span>
               </p>
             )}
           </form>
         ) : (
-          <div className="pt-2 space-y-3 animate-in fade-in">
-            <div className="p-4 bg-emerald-950/40 border border-emerald-800/40 rounded-xl text-emerald-400 text-xs font-semibold flex items-center justify-between">
-              <span>Área do Desenvolvedor Desbloqueada</span>
+          <div className="pt-2 space-y-4 animate-in fade-in">
+            <div className="p-4 bg-emerald-950/40 border border-emerald-800/40 rounded-xl text-emerald-400 text-xs font-semibold flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+              <div className="flex items-center gap-2">
+                <Check size={16} />
+                <span>Área do Desenvolvedor Desbloqueada com Senha Segura</span>
+              </div>
               <button
                 onClick={handleExportSingleHTML}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition-all shadow-[0_0_12px_#dc2626]"
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition-all shadow-[0_0_12px_#dc2626] shrink-0"
               >
                 Baixar Snapshot HTML Único
               </button>
+            </div>
+
+            {/* Code and Database Viewer */}
+            <div className="space-y-2">
+              <span className="text-xs font-bold text-gray-300 block uppercase tracking-wider">
+                Estrutura de Dados e Código Ativo (/data/db.json)
+              </span>
+              <pre className="bg-[#08090f] border border-[#1b1f2e] p-4 rounded-xl text-[11px] font-mono-code text-gray-300 max-h-64 overflow-y-auto overflow-x-auto leading-relaxed select-all">
+                {JSON.stringify(
+                  {
+                    app: settings.appName,
+                    versao: '2.5.0-premium',
+                    totalClientes: clients.length,
+                    servidores: servers.map(s => s.nome),
+                    planos: plans.map(p => ({ nome: p.nome, valor: p.valorPadrao })),
+                    amostraClientes: clients.slice(0, 3)
+                  },
+                  null,
+                  2
+                )}
+              </pre>
             </div>
           </div>
         )}

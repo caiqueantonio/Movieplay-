@@ -23,6 +23,9 @@ export interface Client {
   observacoes: string;   // 18. Observações
   
   // Metadados internos
+  fotoUrl?: string;      // Foto personalizada do cliente (data URL persistente)
+  dataNascimento?: string; // Data de nascimento do cliente (YYYY-MM-DD ou DD/MM/AAAA)
+  arquivado?: boolean;   // Se o cliente expirado foi arquivado (pasta inativos)
   createdAt?: string;
   updatedAt?: string;
   ultimoPagamento?: string;
@@ -111,6 +114,27 @@ export interface AppNotification {
   link?: string;
 }
 
+export interface BillingConfig {
+  chavePix: string;
+  tipoChavePix: 'cpf_cnpj' | 'email' | 'celular' | 'aleatoria';
+  beneficiario: string;
+  linkPagamento: string;
+  descricao: string;
+  instrucoes: string;
+  mensagemCobrancaTemplate: string;
+}
+
+export interface AlertScheduleConfig {
+  aviso7Dias: boolean;
+  aviso3Dias: boolean;
+  aviso1Dia: boolean;
+  avisoNoDia: boolean;
+  avisoAposVencimento: boolean;
+  intervaloAtrasoDias: number; // ex: a cada 2 dias durante atraso
+  horarioEnvio: string;        // ex: '09:00'
+  pushEnabled: boolean;
+}
+
 export interface AppSettings {
   appName: string;
   appSubtitle: string;
@@ -125,6 +149,8 @@ export interface AppSettings {
   mpPublicKey: string;
   mpSandbox: boolean;
   diasTolerancia: number;
+  billingConfig?: BillingConfig;
+  alertSchedule?: AlertScheduleConfig;
 }
 
 export interface UserAccount {

@@ -706,17 +706,44 @@ export const INITIAL_AUTOMATIONS: AutomationRule[] = [
 export const INITIAL_SETTINGS: AppSettings = {
   appName: 'Gerenciapró',
   appSubtitle: 'Painel Premium',
-  logoUrl: '/logo.svg',
+  logoUrl: '/logo.png',
   theme: 'dark',
   soundAlert: 'sino',
-  soundEnabled: true,
+  soundEnabled: false,
   primaryColor: '#dc2626',
   adminWhatsapp: '83986302833',
   contatoUrl: 'https://wa.me/5583986302833',
   mpAccessToken: '',
   mpPublicKey: '',
   mpSandbox: true,
-  diasTolerancia: 3
+  diasTolerancia: 3,
+  billingConfig: {
+    chavePix: 'caiqueempreendedorismo@gmail.com',
+    tipoChavePix: 'email',
+    beneficiario: 'Gerenciapró — Movieplay',
+    linkPagamento: 'https://link.mercadopago.com.br/gerenciapro',
+    descricao: 'Assinatura e renovação de acesso ao serviço IPTV',
+    instrucoes: 'Após realizar a transferência ou pagamento pelo link, envie o comprovante nesta conversa.',
+    mensagemCobrancaTemplate: `Olá, {{nome}}! Tudo bem? Seu plano {{plano}} tem vencimento em {{vencimento}}. O valor para renovação é R$ {{valor}}.
+
+Você pode realizar o pagamento pelo link abaixo:
+{{link_pagamento}}
+
+Ou utilize a chave Pix:
+{{chave_pix}}
+
+Após o pagamento, por favor envie o comprovante por aqui para confirmação imediata. Obrigado!`
+  },
+  alertSchedule: {
+    aviso7Dias: true,
+    aviso3Dias: true,
+    aviso1Dia: true,
+    avisoNoDia: true,
+    avisoAposVencimento: true,
+    intervaloAtrasoDias: 2,
+    horarioEnvio: '09:00',
+    pushEnabled: false
+  }
 };
 
 export const INITIAL_USER: UserAccount = {

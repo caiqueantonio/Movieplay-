@@ -8,7 +8,9 @@ import {
   NotificationLog,
   AppSettings,
   UserAccount,
-  AppNotification
+  AppNotification,
+  BillingConfig,
+  AlertScheduleConfig
 } from '../types';
 import {
   INITIAL_CLIENTS,
@@ -19,6 +21,12 @@ import {
   INITIAL_USER
 } from '../data/initialData';
 import { soundEffects } from '../utils/audio';
+import {
+  checkClientsDueAlerts,
+  sendBrowserNotification,
+  isNotificationSupported
+} from '../utils/notifications';
+import { getUpcomingBirthdays } from '../utils/birthdays';
 
 interface UndoAction {
   id: string;
@@ -42,6 +50,16 @@ interface AppContextType {
   settings: AppSettings;
   user: UserAccount;
   
+  // Toast & Quick Copy
+  toastMessage: string | null;
+  showToast: (msg: string) => void;
+  copyClientField: (fieldName: string, value: string) => void;
+  copyClientFullCredentials: (client: Client) => void;
+  
+  // Direct client open
+  activeClientIdToOpen: string | null;
+  setActiveClientIdToOpen: (id: string | null) => void;
+
   // Notifications & Undo
   notifications: AppNotification[];
   markNotificationAsRead: (id: string) => void;
@@ -59,6 +77,12 @@ interface AppContextType {
   // Client Actions
   addClient: (client: Omit<Client, 'id' | 'createdAt' | 'updatedAt'>) => Promise<Client>;
   updateClient: (id: string, updates: Partial<Client>) => Promise<Client>;
+  updateClientPhoto: (id: string, fotoUrl?: string) => Promise<void>;
+  toggleClientStatus: (id: string) => Promise<void>;
+  archiveClient: (id: string) => Promise<void>;
+  unarchiveClient: (id: string) => Promise<void>;
+  archiveExpiredClients: () => Promise<number>;
+  bulkArchiveClients: (ids: string[], arquivado: boolean) => Promise<void>;
   deleteClient: (id: string) => Promise<void>;
   bulkDeleteClients: (ids: string[]) => Promise<void>;
   renewClientPlan: (clientId: string, novoVencimento: string, valor?: number, plano?: string, forma?: string) => Promise<void>;
@@ -83,6 +107,8 @@ interface AppContextType {
   
   // Settings Actions
   updateSettings: (newSettings: Partial<AppSettings>) => Promise<void>;
+  updateBillingConfig: (billingConfig: Partial<BillingConfig>) => Promise<void>;
+  updateAlertSchedule: (alertSchedule: Partial<AlertScheduleConfig>) => Promise<void>;
   restoreDatabase: (data: unknown) => Promise<void>;
 }
 
@@ -100,6 +126,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [notificationLogs, setNotificationLogs] = useState<NotificationLog[]>([]);
   const [settings, setSettings] = useState<AppSettings>(INITIAL_SETTINGS);
   const [user, setUser] = useState<UserAccount>(INITIAL_USER);
+
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [activeClientIdToOpen, setActiveClientIdToOpen] = useState<string | null>(null);
 
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
@@ -122,6 +151,45 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   ]);
 
+  const showToast = useCallback((msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage(prev => prev === msg ? null : prev);
+    }, 2400);
+  }, []);
+
+  // Quick Copy Helper with discreet feedback (silent as requested)
+  const copyClientField = useCallback((fieldName: string, value: string) => {
+    if (!value) {
+      showToast(`${fieldName} está vazio`);
+      return;
+    }
+    navigator.clipboard.writeText(value);
+    showToast(`${fieldName} copiado!`);
+  }, [showToast]);
+
+  // Copy Full Client Access Credentials (silent as requested)
+  const copyClientFullCredentials = useCallback((client: Client) => {
+    const credText = [
+      `🎬 *GERENCIAPRÓ — DADOS DE ACESSO*`,
+      `👤 *Cliente:* ${client.nome}`,
+      `📡 *Servidor:* ${client.servidor || 'Cine Hub'}`,
+      `📱 *Aplicativo:* ${client.aplicativo || 'XCIPTV'}`,
+      client.usuarioDisp ? `🔐 *Usuário:* ${client.usuarioDisp}` : '',
+      client.senhaDisp ? `🔑 *Senha:* ${client.senhaDisp}` : '',
+      client.mac ? `📟 *Endereço MAC:* ${client.mac}` : '',
+      client.senhaMac ? `🔑 *Senha MAC:* ${client.senhaMac}` : '',
+      `📅 *Vencimento:* ${client.vencimento}`,
+      `💰 *Plano:* ${client.plano} (R$ ${Number(client.valor).toFixed(2)})`,
+      `⚡ *Status:* ${client.status}`,
+      `━━━━━━━━━━━━━━━━━━━━━━`,
+      `Bom entretenimento!`
+    ].filter(Boolean).join('\n');
+
+    navigator.clipboard.writeText(credText);
+    showToast('Ficha e credenciais completas copiadas!');
+  }, [showToast]);
+
   // Load from backend on mount
   const refreshData = useCallback(async () => {
     setIsSyncing(true);
@@ -135,8 +203,57 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (data.payments) setPayments(data.payments);
         if (data.automations) setAutomations(data.automations);
         if (data.notificationLogs) setNotificationLogs(data.notificationLogs);
-        if (data.settings) setSettings(data.settings);
+        if (data.settings) {
+          // Merge with defaults to ensure billingConfig and alertSchedule exist
+          setSettings({
+            ...INITIAL_SETTINGS,
+            ...data.settings,
+            billingConfig: {
+              ...INITIAL_SETTINGS.billingConfig,
+              ...(data.settings.billingConfig || {})
+            },
+            alertSchedule: {
+              ...INITIAL_SETTINGS.alertSchedule,
+              ...(data.settings.alertSchedule || {})
+            }
+          });
+        }
         if (data.user) setUser(data.user);
+
+        // Check alerts and notify if permissions granted
+        if (data.clients && data.settings?.alertSchedule?.pushEnabled) {
+          const alerts = checkClientsDueAlerts(data.clients, data.settings.alertSchedule);
+          if (alerts.length > 0) {
+            alerts.slice(0, 2).forEach(a => {
+              sendBrowserNotification(`🚨 ${a.client.nome} (${a.diasTexto})`, {
+                body: a.mensagem,
+                clientUrl: `#client-${a.client.id}`
+              });
+            });
+          }
+        }
+
+        // Check birthdays (today or within 7 days) and register alerts
+        if (data.clients) {
+          const bdays = getUpcomingBirthdays(data.clients);
+          if (bdays.length > 0) {
+            const bdayNotifs: AppNotification[] = bdays.map(({ client, info }) => ({
+              id: `bday-${client.id}-${info.dataTexto}`,
+              titulo: info.isToday ? `🎂 Aniversário Hoje: ${client.nome}!` : `🎉 Aniversário Chegando: ${client.nome}`,
+              mensagem: info.isToday
+                ? `${client.nome} comemora aniversário hoje (${info.dataTexto})! Aproveite para enviar uma mensagem carinhosa e um brinde especial.`
+                : `${client.nome} faz aniversário em ${info.daysUntil} dia(s) (${info.dataTexto}). Que tal preparar um desconto ou brinde exclusivo?`,
+              tipo: 'sucesso',
+              data: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+              lida: false
+            }));
+            setNotifications(prev => {
+              const existingIds = new Set(prev.map(p => p.id));
+              const fresh = bdayNotifs.filter(b => !existingIds.has(b.id));
+              return [...fresh, ...prev];
+            });
+          }
+        }
       }
     } catch (err) {
       console.warn('Backend sync failed, using local persistent fallback', err);
@@ -175,6 +292,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       await action.undo();
       playSound('sino');
+      showToast(`Desfeito: ${action.description}`);
       setNotifications(prev => [
         {
           id: 'notif-' + Date.now(),
@@ -212,12 +330,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const newClient = await res.json();
       setClients(prev => [newClient, ...prev]);
 
-      // Push undo
       pushUndo(`Cadastro de ${newClient.nome}`, async () => {
         await deleteClient(newClient.id);
       });
 
       playSound('sino');
+      showToast(`Cliente ${newClient.nome} cadastrado!`);
       return newClient;
     } finally {
       setIsSyncing(false);
@@ -243,7 +361,77 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       }
 
       playSound('beep');
+      showToast(`Dados de ${updated.nome} atualizados!`);
       return updated;
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const updateClientPhoto = async (id: string, fotoUrl?: string) => {
+    await updateClient(id, { fotoUrl });
+    showToast(fotoUrl ? 'Foto do cliente atualizada!' : 'Foto removida!');
+  };
+
+  const toggleClientStatus = async (id: string) => {
+    const client = clients.find(c => c.id === id);
+    if (!client) return;
+    const newStatus = client.status === 'Suspenso' ? 'Em dia' : 'Suspenso';
+    await updateClient(id, { status: newStatus });
+    showToast(`Status alterado para: ${newStatus}`);
+  };
+
+  const archiveClient = async (id: string) => {
+    await updateClient(id, { arquivado: true });
+    showToast('Cliente movido para pasta de Inativos/Arquivados');
+  };
+
+  const unarchiveClient = async (id: string) => {
+    await updateClient(id, { arquivado: false });
+    showToast('Cliente restaurado para pasta de Ativos!');
+  };
+
+  const archiveExpiredClients = async (): Promise<number> => {
+    const expired = clients.filter(c => !c.arquivado && (c.status === 'Em atraso' || c.status === 'Suspenso' || c.status === 'Cancelado'));
+    if (expired.length === 0) {
+      showToast('Nenhum cliente expirado para arquivar.');
+      return 0;
+    }
+    setIsSyncing(true);
+    try {
+      for (const cl of expired) {
+        await fetch(`/api/clients/${cl.id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ arquivado: true })
+        });
+      }
+      setClients(prev => prev.map(c => expired.some(e => e.id === c.id) ? { ...c, arquivado: true } : c));
+      showToast(`${expired.length} clientes expirados arquivados com sucesso!`);
+      return expired.length;
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const bulkArchiveClients = async (ids: string[], arquivado: boolean) => {
+    if (ids.length === 0) return;
+    setIsSyncing(true);
+    try {
+      for (const id of ids) {
+        await fetch(`/api/clients/${id}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ arquivado })
+        });
+      }
+      setClients(prev => prev.map(c => ids.includes(c.id) ? { ...c, arquivado } : c));
+      playSound('sino');
+      showToast(
+        arquivado
+          ? `${ids.length} cliente(s) movido(s) para Cliente inativos!`
+          : `${ids.length} cliente(s) reativado(s) para Clientes Ativos!`
+      );
     } finally {
       setIsSyncing(false);
     }
@@ -260,6 +448,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       pushUndo(`Exclusão de ${original.nome}`, async () => {
         await addClient(original);
       });
+      showToast(`Cliente ${original.nome} excluído!`);
     } finally {
       setIsSyncing(false);
     }
@@ -281,6 +470,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           await addClient(item);
         }
       });
+      showToast(`${ids.length} clientes excluídos!`);
     } finally {
       setIsSyncing(false);
     }
@@ -302,6 +492,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setPayments(prev => [data.payment, ...prev]);
       }
       playSound('sino');
+      showToast(`Plano de ${data.client.nome} renovado até ${novoVencimento}!`);
       setNotifications(prev => [
         {
           id: 'notif-' + Date.now(),
@@ -329,6 +520,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (res.ok) {
         await refreshData();
         playSound('sino');
+        showToast(`${imported.length} clientes importados com sucesso!`);
       }
     } finally {
       setIsSyncing(false);
@@ -348,6 +540,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const newServer = await res.json();
       setServers(prev => [...prev, newServer]);
       playSound('sino');
+      showToast(`Servidor ${newServer.nome} adicionado!`);
     } finally {
       setIsSyncing(false);
     }
@@ -358,6 +551,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       await fetch(`/api/servers/${id}`, { method: 'DELETE' });
       setServers(prev => prev.filter(s => s.id !== id));
+      showToast('Servidor removido!');
     } finally {
       setIsSyncing(false);
     }
@@ -376,6 +570,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const newPlan = await res.json();
       setPlans(prev => [...prev, newPlan]);
       playSound('sino');
+      showToast(`Plano ${newPlan.nome} adicionado!`);
     } finally {
       setIsSyncing(false);
     }
@@ -392,6 +587,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const updated = await res.json();
       setPlans(prev => prev.map(p => p.id === id ? updated : p));
       playSound('beep');
+      showToast(`Plano ${updated.nome} atualizado!`);
     } finally {
       setIsSyncing(false);
     }
@@ -402,6 +598,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       await fetch(`/api/plans/${id}`, { method: 'DELETE' });
       setPlans(prev => prev.filter(p => p.id !== id));
+      showToast('Plano removido!');
     } finally {
       setIsSyncing(false);
     }
@@ -420,6 +617,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const created = await res.json();
       setPayments(prev => [created, ...prev]);
       playSound('sino');
+      showToast(`Cobrança de R$ ${Number(created.valorFinal).toFixed(2)} emitida!`);
       return created;
     } finally {
       setIsSyncing(false);
@@ -438,6 +636,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setClients(prev => prev.map(c => c.id === data.client.id ? data.client : c));
       }
       playSound('sino');
+      showToast('Pagamento confirmado e cliente regularizado!');
     } finally {
       setIsSyncing(false);
     }
@@ -456,6 +655,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       const updated = await res.json();
       setAutomations(updated);
       playSound('sino');
+      showToast('Regras de automação atualizadas!');
     } finally {
       setIsSyncing(false);
     }
@@ -463,21 +663,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const sendWhatsAppReminder = async (client: Client, rule?: AutomationRule) => {
     const selectedPlan = plans.find(p => p.nome.toLowerCase() === client.plano.toLowerCase()) || plans[0];
-    const pixCode = selectedPlan?.chavePix || settings.adminWhatsapp;
-    const linkCobranca = selectedPlan?.linkCobranca || settings.contatoUrl;
+    const pixCode = settings.billingConfig?.chavePix || selectedPlan?.chavePix || settings.adminWhatsapp;
+    const linkCobranca = settings.billingConfig?.linkPagamento || selectedPlan?.linkCobranca || settings.contatoUrl;
 
-    const defaultTemplate = rule?.mensagemTemplate || 
-      'Olá {nome}! Seu plano {plano} no Gerenciapró vence em {vencimento} no valor de R$ {valor}. Renove via Pix: {pix} ou link: {link}';
+    const template = rule?.mensagemTemplate || settings.billingConfig?.mensagemCobrancaTemplate ||
+      'Olá, {{nome}}! Tudo bem? Seu plano {{plano}} tem vencimento em {{vencimento}}. O valor para renovação é R$ {{valor}}.\n\nVocê pode realizar o pagamento pelo link abaixo:\n{{link_pagamento}}\n\nOu utilize a chave Pix:\n{{chave_pix}}';
 
-    const msg = defaultTemplate
-      .replace(/{nome}/g, client.nome)
-      .replace(/{plano}/g, client.plano)
-      .replace(/{vencimento}/g, client.vencimento)
-      .replace(/{valor}/g, Number(client.valor).toFixed(2))
-      .replace(/{pix}/g, pixCode)
-      .replace(/{link}/g, linkCobranca);
+    // Replace both double and single curly braces
+    const msg = template
+      .replace(/{{nome}}|{nome}/gi, client.nome)
+      .replace(/{{plano}}|{plano}/gi, client.plano)
+      .replace(/{{vencimento}}|{vencimento}/gi, client.vencimento)
+      .replace(/{{valor}}|{valor}/gi, Number(client.valor).toFixed(2))
+      .replace(/{{chave_pix}}|{{pix}}|{pix}/gi, pixCode)
+      .replace(/{{link_pagamento}}|{{link}}|{link}/gi, linkCobranca);
 
-    const cleanPhone = client.whatsapp.replace(/\D/g, '');
+    const cleanPhone = (client.whatsapp || client.celular || '').replace(/\D/g, '');
     const phoneWithCountry = cleanPhone.startsWith('55') ? cleanPhone : '55' + cleanPhone;
     const url = `https://wa.me/${phoneWithCountry}?text=${encodeURIComponent(msg)}`;
 
@@ -493,7 +694,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
           clienteId: client.id,
           clienteNome: client.nome,
           clienteWhatsapp: client.whatsapp,
-          tipo: rule?.tipo || 'cobranca_manual',
+          tipo: rule?.tipo || 'cobranca_personalizada',
           status: 'enviado',
           mensagem: msg
         })
@@ -507,17 +708,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
 
     playSound('beep');
-    setNotifications(prev => [
-      {
-        id: 'notif-' + Date.now(),
-        titulo: 'WhatsApp Aberto',
-        mensagem: `Mensagem de cobrança enviada para ${client.nome} (${client.whatsapp})`,
-        tipo: 'sucesso',
-        data: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-        lida: false
-      },
-      ...prev
-    ]);
+    showToast(`WhatsApp aberto para ${client.nome}!`);
   };
 
   // --- SETTINGS ---
@@ -537,6 +728,20 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  const updateBillingConfig = async (billingConfig: Partial<BillingConfig>) => {
+    const currentBilling = settings.billingConfig || INITIAL_SETTINGS.billingConfig!;
+    const merged = { ...currentBilling, ...billingConfig };
+    await updateSettings({ billingConfig: merged });
+    showToast('Configurações de cobrança salvas!');
+  };
+
+  const updateAlertSchedule = async (alertSchedule: Partial<AlertScheduleConfig>) => {
+    const currentSchedule = settings.alertSchedule || INITIAL_SETTINGS.alertSchedule!;
+    const merged = { ...currentSchedule, ...alertSchedule };
+    await updateSettings({ alertSchedule: merged });
+    showToast('Preferências de alertas salvas!');
+  };
+
   const restoreDatabase = async (data: unknown) => {
     setIsSyncing(true);
     try {
@@ -548,6 +753,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       if (res.ok) {
         await refreshData();
         playSound('sino');
+        showToast('Backup restaurado com sucesso!');
       }
     } finally {
       setIsSyncing(false);
@@ -569,6 +775,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         notificationLogs,
         settings,
         user,
+        toastMessage,
+        showToast,
+        copyClientField,
+        copyClientFullCredentials,
+        activeClientIdToOpen,
+        setActiveClientIdToOpen,
         notifications,
         markNotificationAsRead,
         clearNotifications,
@@ -581,6 +793,12 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         toggleSound,
         addClient,
         updateClient,
+        updateClientPhoto,
+        toggleClientStatus,
+        archiveClient,
+        unarchiveClient,
+        archiveExpiredClients,
+        bulkArchiveClients,
         deleteClient,
         bulkDeleteClients,
         renewClientPlan,
@@ -595,6 +813,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updateAutomations,
         sendWhatsAppReminder,
         updateSettings,
+        updateBillingConfig,
+        updateAlertSchedule,
         restoreDatabase
       }}
     >

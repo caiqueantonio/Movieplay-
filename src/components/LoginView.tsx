@@ -54,9 +54,9 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
       <div className="bg-[#0b0d14] border border-[#1d2232] rounded-3xl max-w-md w-full p-8 md:p-10 space-y-6 shadow-2xl relative z-10 animate-in fade-in zoom-in-95 duration-200">
         {/* Logo and Brand */}
         <div className="text-center space-y-3">
-          <div className="w-20 h-20 mx-auto rounded-full bg-[#12090e] border border-red-950/80 p-2 flex items-center justify-center shadow-[0_0_25px_rgba(220,38,38,0.4)]">
+          <div className="w-24 h-24 mx-auto flex items-center justify-center filter drop-shadow-[0_0_25px_rgba(220,38,38,0.5)]">
             <img
-              src={settings.logoUrl || '/logo.svg'}
+              src={settings.logoUrl || '/logo.png'}
               alt="Logo Movieplay"
               className="w-full h-full object-contain"
             />
