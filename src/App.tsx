@@ -4,6 +4,7 @@ import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { DashboardView } from './components/DashboardView';
 import { ClientsView } from './components/ClientsView';
+import { ServersView } from './components/ServersView';
 import { PaymentsView } from './components/PaymentsView';
 import { AutomationsView } from './components/AutomationsView';
 import { ChartsView } from './components/ChartsView';
@@ -13,22 +14,24 @@ import { SettingsView } from './components/SettingsView';
 import { ClientModal } from './components/ClientModal';
 import { ProfileModal } from './components/ProfileModal';
 import { LoginView } from './components/LoginView';
-import { Client } from './types';
+import { MobileNotificationsModal } from './components/MobileNotificationsModal';
+import { Client, UserAccount } from './types';
 
 function MainApp() {
-  const { activeTab, setActiveTab, clients, toastMessage, activeClientIdToOpen, setActiveClientIdToOpen } = useApp();
+  const { activeTab, setActiveTab, clients, toastMessage, activeClientIdToOpen, setActiveClientIdToOpen, updateUser } = useApp();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
 
   // Client Modal
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
   const [clientModalMode, setClientModalMode] = useState<'view' | 'edit' | 'create'>('view');
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
 
-  // Profile Modal
+  // Profile Modal & Mobile Notifications Modal
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
+  const [isMobileNotifModalOpen, setIsMobileNotifModalOpen] = useState(false);
 
   // Auto-open client modal if deep-linked or routed via activeClientIdToOpen
   useEffect(() => {
@@ -67,12 +70,22 @@ function MainApp() {
     setIsClientModalOpen(true);
   };
 
+  const handleLoginSuccess = (userProfile?: Partial<UserAccount>) => {
+    if (userProfile) {
+      updateUser(userProfile);
+    }
+    setIsAuthenticated(true);
+  };
+
   const handleLogout = () => {
+    try {
+      localStorage.removeItem('gerenciapro_session');
+    } catch {}
     setIsAuthenticated(false);
   };
 
   if (!isAuthenticated) {
-    return <LoginView onSuccess={() => setIsAuthenticated(true)} />;
+    return <LoginView onSuccess={handleLoginSuccess} />;
   }
 
   return (
@@ -92,6 +105,7 @@ function MainApp() {
         <Header
           onToggleMobileMenu={() => setMobileMenuOpen(!mobileMenuOpen)}
           onOpenProfile={() => setIsProfileModalOpen(true)}
+          onOpenMobileNotifs={() => setIsMobileNotifModalOpen(true)}
         />
 
         {/* Content View */}
@@ -100,6 +114,7 @@ function MainApp() {
             <DashboardView
               onOpenClient={handleOpenClient}
               onRenewClient={handleRenewClient}
+              onOpenMobileNotifs={() => setIsMobileNotifModalOpen(true)}
             />
           )}
 
@@ -111,6 +126,8 @@ function MainApp() {
               onRenewClient={handleRenewClient}
             />
           )}
+
+          {activeTab === 'servidores' && <ServersView />}
 
           {activeTab === 'cobrancas' && <PaymentsView />}
 
@@ -138,6 +155,13 @@ function MainApp() {
       <ProfileModal
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
+        onLogout={handleLogout}
+      />
+
+      {/* Phone Integration Notifications Modal */}
+      <MobileNotificationsModal
+        isOpen={isMobileNotifModalOpen}
+        onClose={() => setIsMobileNotifModalOpen(false)}
       />
 
       {/* Futuristic Neon Toast Notification */}

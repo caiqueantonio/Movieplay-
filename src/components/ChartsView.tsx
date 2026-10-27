@@ -16,21 +16,49 @@ export const ChartsView: React.FC = () => {
   const [period, setPeriod] = useState<'30d' | '90d' | 'ano'>('30d');
 
   const totalClients = clients.length;
-  const activeCount = clients.filter(c => c.status === 'Em dia').length;
-  const overdueCount = clients.filter(c => c.status === 'Em atraso').length;
-  const totalRevenue = clients.reduce((acc, c) => acc + (Number(c.valor) || 0), 0);
+  const activeCount = clients.filter(c => !c.arquivado && c.status === 'Em dia').length;
+  const overdueCount = clients.filter(c => !c.arquivado && c.status === 'Em atraso').length;
+
+  // Classificação dos planos
+  const isPlanMensal = (plano: string) => {
+    const p = (plano || '').toLowerCase();
+    return p.includes('mensal') || (!p.includes('anual') && !p.includes('semestral') && !p.includes('trimestral'));
+  };
+  const isPlanAnual = (plano: string) => (plano || '').toLowerCase().includes('anual');
+  const isPlanSemestral = (plano: string) => (plano || '').toLowerCase().includes('semestral');
+  const isPlanTrimestral = (plano: string) => (plano || '').toLowerCase().includes('trimestral');
+
+  const activeNonArchived = clients.filter(c => !c.arquivado);
+  const mensalClients = activeNonArchived.filter(c => isPlanMensal(c.plano));
+  const anualClients = activeNonArchived.filter(c => isPlanAnual(c.plano));
+  const semestralClients = activeNonArchived.filter(c => isPlanSemestral(c.plano));
+  const trimestralClients = activeNonArchived.filter(c => isPlanTrimestral(c.plano));
+
+  // Renda Mensal (exclui anuais)
+  const rendaMensal = mensalClients.reduce((acc, c) => acc + (Number(c.valor) || 0), 0);
+
+  // Lucro Anual (anuais + mensais 12x + semestrais 2x + trimestrais 4x)
+  const receitaAnualPlanosAnuais = anualClients.reduce((acc, c) => acc + (Number(c.valor) || 0), 0);
+  const receitaAnualPlanosMensais = rendaMensal * 12;
+  const receitaAnualPlanosSemestrais = semestralClients.reduce((acc, c) => acc + (Number(c.valor) || 0) * 2, 0);
+  const receitaAnualPlanosTrimestrais = trimestralClients.reduce((acc, c) => acc + (Number(c.valor) || 0) * 4, 0);
+
+  const lucroAnualTotal = receitaAnualPlanosAnuais + receitaAnualPlanosMensais + receitaAnualPlanosSemestrais + receitaAnualPlanosTrimestrais;
+
+  const displayRevenue = period === 'ano' ? lucroAnualTotal : rendaMensal;
 
   // Month-by-month projection
+  const baseMonthly = rendaMensal > 0 ? rendaMensal : 400;
   const monthlyProjection = [
-    { mes: 'Mai 2026', receita: 1240.00, clientes: 24 },
-    { mes: 'Jun 2026', receita: 1360.00, clientes: 26 },
-    { mes: 'Jul 2026', receita: 1410.00, clientes: 27 },
-    { mes: 'Ago 2026', receita: 1450.00, clientes: 28 },
-    { mes: 'Set 2026', receita: 1460.00, clientes: 28 },
-    { mes: 'Out 2026', receita: totalRevenue, clientes: totalClients },
+    { mes: 'Mai 2026', receita: Math.round(baseMonthly * 0.88), clientes: Math.max(1, mensalClients.length - 3) },
+    { mes: 'Jun 2026', receita: Math.round(baseMonthly * 0.92), clientes: Math.max(1, mensalClients.length - 2) },
+    { mes: 'Jul 2026', receita: Math.round(baseMonthly * 0.95), clientes: Math.max(1, mensalClients.length - 1) },
+    { mes: 'Ago 2026', receita: Math.round(baseMonthly * 0.97), clientes: mensalClients.length },
+    { mes: 'Set 2026', receita: Math.round(baseMonthly * 0.99), clientes: mensalClients.length },
+    { mes: 'Out 2026', receita: rendaMensal, clientes: mensalClients.length },
   ];
 
-  const maxRevenue = Math.max(...monthlyProjection.map(m => m.receita));
+  const maxRevenue = Math.max(...monthlyProjection.map(m => m.receita), 1);
 
   return (
     <div className="space-y-6 max-w-5xl animate-in fade-in duration-200">
@@ -80,7 +108,7 @@ export const ChartsView: React.FC = () => {
           </div>
           <div className="text-right">
             <span className="font-display text-xl font-extrabold text-white">
-              R$ {totalRevenue.toFixed(2)}
+              R$ {displayRevenue.toFixed(2)}
             </span>
             <span className="text-[11px] text-emerald-400 block font-semibold">+ 4.2% este mês</span>
           </div>

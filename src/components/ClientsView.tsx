@@ -38,7 +38,8 @@ import {
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { Client, ClientStatus } from '../types';
-import { exportClientsToExcel, exportClientsToCSV, parseExcelBuffer, ImportResult, downloadSampleExcelTemplate } from '../utils/excel';
+import { exportClientsToExcel, exportClientsToCSV, parseExcelBuffer, ImportResult, downloadSampleExcelTemplate, EXCEL_COLUMNS } from '../utils/excel';
+import { INITIAL_CLIENTS } from '../data/initialData';
 import { processClientAvatar } from '../utils/imageHelper';
 import { downloadClientAlarmCalendarFile, getDaysDiffFromReference } from '../utils/notifications';
 import { getClientBirthdayInfo } from '../utils/birthdays';
@@ -311,6 +312,24 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
     } finally {
       setImportParsing(false);
     }
+  };
+
+  const handleLoadOfficialSheet = () => {
+    const result: ImportResult = {
+      totalRows: INITIAL_CLIENTS.length,
+      validRows: INITIAL_CLIENTS.map(c => ({
+        raw: c as unknown as Record<string, unknown>,
+        parsed: c,
+        isDuplicate: clients.some(ex => ex.nome.toLowerCase() === c.nome.toLowerCase()),
+        hasErrors: false,
+        errorMessages: []
+      })),
+      duplicatesCount: clients.filter(ex => INITIAL_CLIENTS.some(c => c.nome.toLowerCase() === ex.nome.toLowerCase())).length,
+      errorRowsCount: 0,
+      headersDetected: [...EXCEL_COLUMNS]
+    };
+    setImportResult(result);
+    playSound('sino');
   };
 
   return (
@@ -782,8 +801,12 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                             )}
 
                             {client.appPago && (
-                              <span className="px-1.5 py-0.2 rounded bg-emerald-950 text-emerald-400 border border-emerald-800/60 font-semibold text-[9px]">
-                                Pago
+                              <span className={`px-2 py-0.5 rounded border font-semibold text-[9px] inline-flex items-center gap-1 ${
+                                client.appPagoStatus === 'recebido'
+                                  ? 'bg-emerald-950/80 text-emerald-400 border-emerald-800/60 shadow-[0_0_6px_rgba(16,185,129,0.2)]'
+                                  : 'bg-amber-950/80 text-amber-300 border-amber-800/60 shadow-[0_0_6px_rgba(245,158,11,0.2)]'
+                              }`}>
+                                {client.appPagoStatus === 'recebido' ? '✓ App Pago (Recebido)' : '⏳ App Pago (Pendente)'}
                               </span>
                             )}
                           </div>
@@ -832,7 +855,15 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                       <td className="py-3 px-3 align-middle">
                         <div className="space-y-1">
                           <div className="flex items-center gap-2">
-                            <span className="px-2 py-0.5 rounded-md bg-[#181a26] text-gray-300 border border-[#272b3e] text-[10px] font-medium">
+                            <span className={`px-2 py-0.5 rounded-md text-[10px] font-medium border ${
+                              (client.plano || '').toLowerCase().includes('anual')
+                                ? 'bg-amber-950/80 text-amber-300 border-amber-800/60 shadow-[0_0_8px_rgba(245,158,11,0.25)]'
+                                : (client.plano || '').toLowerCase().includes('semestral')
+                                ? 'bg-purple-950/80 text-purple-300 border-purple-800/60'
+                                : (client.plano || '').toLowerCase().includes('trimestral')
+                                ? 'bg-blue-950/80 text-blue-300 border-blue-800/60'
+                                : 'bg-[#181a26] text-gray-300 border-[#272b3e]'
+                            }`}>
                               {client.plano || 'Mensal'}
                             </span>
                             <span className="font-semibold text-gray-100 font-mono-code text-xs">
@@ -899,13 +930,22 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                             <MessageCircle size={15} />
                           </button>
 
-                          {/* Quick View / Edit */}
+                          {/* Quick View */}
                           <button
                             onClick={() => onOpenClient(client)}
                             className="p-1.5 rounded-lg text-blue-400 hover:text-blue-300 hover:bg-blue-950/60 transition-colors"
-                            title="Abrir ficha cadastral completa"
+                            title="Visualizar ficha do cliente"
                           >
                             <Eye size={15} />
+                          </button>
+
+                          {/* Quick Edit */}
+                          <button
+                            onClick={() => onEditClient(client)}
+                            className="p-1.5 rounded-lg text-red-400 hover:text-red-300 hover:bg-red-950/60 transition-colors"
+                            title="Editar ficha cadastral do cliente"
+                          >
+                            <Edit2 size={15} />
                           </button>
 
                           {/* Alarme no celular (.ics) */}
@@ -1056,6 +1096,16 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
                     className="px-3 py-2 rounded-xl bg-[#141724] hover:bg-[#1d2235] text-gray-300 text-xs font-semibold border border-[#23293c]"
                   >
                     Baixar Modelo
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={handleLoadOfficialSheet}
+                    className="px-3 py-2 rounded-xl bg-red-950/60 hover:bg-red-900/80 text-red-300 hover:text-white text-xs font-semibold border border-red-800/40 transition-colors flex items-center gap-1.5"
+                    title="Carregar a planilha oficial do Movieplay (28 clientes reais)"
+                  >
+                    <Sparkles size={14} className="text-amber-400" />
+                    <span>Carregar Base Oficial (Clientes.csv)</span>
                   </button>
                 </div>
               </div>

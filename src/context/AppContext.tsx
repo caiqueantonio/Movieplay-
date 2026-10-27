@@ -10,7 +10,10 @@ import {
   UserAccount,
   AppNotification,
   BillingConfig,
-  AlertScheduleConfig
+  AlertScheduleConfig,
+  PaymentMethodItem,
+  MessageTemplate,
+  ServerDeposit
 } from '../types';
 import {
   INITIAL_CLIENTS,
@@ -18,7 +21,10 @@ import {
   INITIAL_PLANS,
   INITIAL_AUTOMATIONS,
   INITIAL_SETTINGS,
-  INITIAL_USER
+  INITIAL_USER,
+  INITIAL_PAYMENT_METHODS,
+  INITIAL_MESSAGE_TEMPLATES,
+  INITIAL_SERVER_DEPOSITS
 } from '../data/initialData';
 import { soundEffects } from '../utils/audio';
 import {
@@ -49,6 +55,7 @@ interface AppContextType {
   notificationLogs: NotificationLog[];
   settings: AppSettings;
   user: UserAccount;
+  updateUser: (u: Partial<UserAccount>) => void;
   
   // Toast & Quick Copy
   toastMessage: string | null;
@@ -90,7 +97,11 @@ interface AppContextType {
   
   // Server Actions
   addServer: (nome: string, descricao?: string) => Promise<void>;
+  updateServer: (id: string, updates: Partial<ServerItem>) => Promise<void>;
   deleteServer: (id: string) => Promise<void>;
+  serverDeposits: ServerDeposit[];
+  addServerDeposit: (deposit: Omit<ServerDeposit, 'id' | 'createdAt'>) => Promise<ServerDeposit>;
+  deleteServerDeposit: (id: string) => Promise<void>;
   
   // Plan Actions
   addPlan: (plan: Omit<PlanItem, 'id'>) => Promise<void>;
@@ -100,6 +111,23 @@ interface AppContextType {
   // Payment Actions
   addPayment: (payment: Omit<PaymentRecord, 'id' | 'dataCriacao'>) => Promise<PaymentRecord>;
   confirmPayment: (paymentId: string) => Promise<void>;
+
+  // Payment Methods Actions
+  paymentMethods: PaymentMethodItem[];
+  addPaymentMethod: (method: Omit<PaymentMethodItem, 'id'>) => Promise<PaymentMethodItem>;
+  updatePaymentMethod: (id: string, updates: Partial<PaymentMethodItem>) => Promise<void>;
+  deletePaymentMethod: (id: string) => Promise<void>;
+  setDefaultPaymentMethod: (id: string) => Promise<void>;
+  togglePaymentMethod: (id: string) => Promise<void>;
+
+  // Message Templates Actions
+  messageTemplates: MessageTemplate[];
+  addMessageTemplate: (template: Omit<MessageTemplate, 'id' | 'createdAt' | 'updatedAt'>) => Promise<MessageTemplate>;
+  updateMessageTemplate: (id: string, updates: Partial<MessageTemplate>) => Promise<void>;
+  deleteMessageTemplate: (id: string) => Promise<void>;
+  duplicateMessageTemplate: (id: string) => Promise<MessageTemplate>;
+  restoreDefaultTemplates: () => Promise<void>;
+  renderMessageTemplate: (templateContent: string, client: Partial<Client>, paymentMethod?: PaymentMethodItem) => string;
   
   // Automation Actions
   updateAutomations: (rules: AutomationRule[]) => Promise<void>;
@@ -122,6 +150,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const [servers, setServers] = useState<ServerItem[]>(INITIAL_SERVERS);
   const [plans, setPlans] = useState<PlanItem[]>(INITIAL_PLANS);
   const [payments, setPayments] = useState<PaymentRecord[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodItem[]>(INITIAL_PAYMENT_METHODS);
+  const [messageTemplates, setMessageTemplates] = useState<MessageTemplate[]>(INITIAL_MESSAGE_TEMPLATES);
+  const [serverDeposits, setServerDeposits] = useState<ServerDeposit[]>(INITIAL_SERVER_DEPOSITS);
   const [automations, setAutomations] = useState<AutomationRule[]>(INITIAL_AUTOMATIONS);
   const [notificationLogs, setNotificationLogs] = useState<NotificationLog[]>([]);
   const [settings, setSettings] = useState<AppSettings>(INITIAL_SETTINGS);
@@ -201,6 +232,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         if (data.servers) setServers(data.servers);
         if (data.plans) setPlans(data.plans);
         if (data.payments) setPayments(data.payments);
+        if (data.paymentMethods) setPaymentMethods(data.paymentMethods);
+        if (data.messageTemplates) setMessageTemplates(data.messageTemplates);
+        if (data.serverDeposits) setServerDeposits(data.serverDeposits);
         if (data.automations) setAutomations(data.automations);
         if (data.notificationLogs) setNotificationLogs(data.notificationLogs);
         if (data.settings) {
@@ -264,7 +298,26 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   useEffect(() => {
     refreshData();
+    try {
+      const savedSession = localStorage.getItem('gerenciapro_session');
+      if (savedSession) {
+        const parsed = JSON.parse(savedSession);
+        setUser(prev => ({ ...prev, ...parsed }));
+      }
+    } catch (e) {
+      console.warn('Session parse error', e);
+    }
   }, [refreshData]);
+
+  const updateUser = useCallback((u: Partial<UserAccount>) => {
+    setUser(prev => {
+      const updated = { ...prev, ...u };
+      try {
+        localStorage.setItem('gerenciapro_session', JSON.stringify(updated));
+      } catch {}
+      return updated;
+    });
+  }, []);
 
   // Sound trigger
   const playSound = (type?: 'beep' | 'sino' | 'urgente' | 'digital') => {
@@ -345,27 +398,35 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const updateClient = async (id: string, updates: Partial<Client>) => {
     setIsSyncing(true);
     const originalClient = clients.find(c => c.id === id);
+    // Optimistic update so UI reflects immediately
+    const optimisticClient = originalClient
+      ? { ...originalClient, ...updates, updatedAt: new Date().toISOString() }
+      : ({ id, ...updates, updatedAt: new Date().toISOString() } as Client);
+    
+    setClients(prev => prev.map(c => c.id === id ? optimisticClient : c));
+
     try {
       const res = await fetch(`/api/clients/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
       });
-      const updated = await res.json();
-      setClients(prev => prev.map(c => c.id === id ? updated : c));
-
-      if (originalClient) {
-        pushUndo(`Edição de ${originalClient.nome}`, async () => {
-          await updateClient(id, originalClient);
-        });
+      if (res.ok) {
+        const updated = await res.json();
+        setClients(prev => prev.map(c => c.id === id ? updated : c));
+        playSound('beep');
+        showToast(`Dados de ${updated.nome} salvos com sucesso!`);
+        return updated;
       }
-
-      playSound('beep');
-      showToast(`Dados de ${updated.nome} atualizados!`);
-      return updated;
+    } catch (err) {
+      console.warn('Erro ao sincronizar com o servidor:', err);
     } finally {
       setIsSyncing(false);
     }
+
+    playSound('beep');
+    showToast(`Alterações de ${optimisticClient.nome} salvas!`);
+    return optimisticClient;
   };
 
   const updateClientPhoto = async (id: string, fotoUrl?: string) => {
@@ -557,6 +618,67 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   };
 
+  const updateServer = async (id: string, updates: Partial<ServerItem>) => {
+    setIsSyncing(true);
+    setServers(prev => prev.map(s => s.id === id ? { ...s, ...updates } : s));
+    try {
+      const res = await fetch(`/api/servers/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      if (res.ok) {
+        const updated = await res.json();
+        setServers(prev => prev.map(s => s.id === id ? updated : s));
+      }
+      playSound('beep');
+      showToast('Configurações do servidor atualizadas!');
+    } catch {
+      showToast('Configurações salvas localmente!');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const addServerDeposit = async (depositData: Omit<ServerDeposit, 'id' | 'createdAt'>) => {
+    setIsSyncing(true);
+    try {
+      const res = await fetch('/api/server-deposits', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(depositData)
+      });
+      const created = await res.json();
+      setServerDeposits(prev => [created, ...prev]);
+      playSound('sino');
+      showToast(`Investimento de R$ ${Number(created.valor).toFixed(2)} registrado!`);
+      return created;
+    } catch (err) {
+      const fallback: ServerDeposit = {
+        ...depositData,
+        id: 'dep-' + Date.now(),
+        createdAt: new Date().toISOString()
+      };
+      setServerDeposits(prev => [fallback, ...prev]);
+      playSound('sino');
+      showToast(`Investimento de R$ ${Number(fallback.valor).toFixed(2)} registrado!`);
+      return fallback;
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const deleteServerDeposit = async (id: string) => {
+    setIsSyncing(true);
+    try {
+      await fetch(`/api/server-deposits/${id}`, { method: 'DELETE' });
+      setServerDeposits(prev => prev.filter(d => d.id !== id));
+      showToast('Registro de depósito removido!');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   // --- PLANS ---
 
   const addPlan = async (planData: Omit<PlanItem, 'id'>) => {
@@ -641,6 +763,197 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       setIsSyncing(false);
     }
   };
+
+  // --- FORMAS DE PAGAMENTO (Payment Methods) ---
+
+  const addPaymentMethod = async (methodData: Omit<PaymentMethodItem, 'id'>) => {
+    setIsSyncing(true);
+    try {
+      const res = await fetch('/api/payment-methods', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(methodData)
+      });
+      const created = await res.json();
+      setPaymentMethods(prev => {
+        if (created.isDefault) {
+          return [created, ...prev.map(m => ({ ...m, isDefault: false }))];
+        }
+        return [...prev, created];
+      });
+      playSound('sino');
+      showToast(`Forma de pagamento "${created.nome}" cadastrada!`);
+      return created;
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const updatePaymentMethod = async (id: string, updates: Partial<PaymentMethodItem>) => {
+    setIsSyncing(true);
+    try {
+      const res = await fetch(`/api/payment-methods/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      const updated = await res.json();
+      setPaymentMethods(prev => prev.map(m => {
+        if (m.id === id) return updated;
+        if (updates.isDefault) return { ...m, isDefault: false };
+        return m;
+      }));
+      playSound('sino');
+      showToast('Forma de pagamento atualizada!');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const deletePaymentMethod = async (id: string) => {
+    setIsSyncing(true);
+    try {
+      await fetch(`/api/payment-methods/${id}`, { method: 'DELETE' });
+      setPaymentMethods(prev => prev.filter(m => m.id !== id));
+      showToast('Forma de pagamento removida!');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const setDefaultPaymentMethod = async (id: string) => {
+    await updatePaymentMethod(id, { isDefault: true, ativo: true });
+    showToast('Forma de pagamento definida como padrão!');
+  };
+
+  const togglePaymentMethod = async (id: string) => {
+    const item = paymentMethods.find(m => m.id === id);
+    if (!item) return;
+    await updatePaymentMethod(id, { ativo: !item.ativo });
+  };
+
+  // --- MODELOS DE MENSAGENS (Message Templates) ---
+
+  const addMessageTemplate = async (tmplData: Omit<MessageTemplate, 'id' | 'createdAt' | 'updatedAt'>) => {
+    setIsSyncing(true);
+    try {
+      const res = await fetch('/api/message-templates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(tmplData)
+      });
+      const created = await res.json();
+      setMessageTemplates(prev => [created, ...prev]);
+      playSound('sino');
+      showToast(`Modelo "${created.nome}" criado com sucesso!`);
+      return created;
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const updateMessageTemplate = async (id: string, updates: Partial<MessageTemplate>) => {
+    setIsSyncing(true);
+    try {
+      const res = await fetch(`/api/message-templates/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      const updated = await res.json();
+      setMessageTemplates(prev => prev.map(t => t.id === id ? updated : t));
+      playSound('sino');
+      showToast('Modelo de mensagem salvo!');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const deleteMessageTemplate = async (id: string) => {
+    setIsSyncing(true);
+    try {
+      await fetch(`/api/message-templates/${id}`, { method: 'DELETE' });
+      setMessageTemplates(prev => prev.filter(t => t.id !== id));
+      showToast('Modelo de mensagem excluído!');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const duplicateMessageTemplate = async (id: string) => {
+    const source = messageTemplates.find(t => t.id === id);
+    if (!source) throw new Error('Modelo não encontrado');
+    return await addMessageTemplate({
+      nome: `${source.nome} (Cópia)`,
+      categoria: source.categoria,
+      categoriaNome: source.categoriaNome,
+      plano: source.plano,
+      formaPagamentoId: source.formaPagamentoId,
+      conteudo: source.conteudo,
+      isDefault: false
+    });
+  };
+
+  const restoreDefaultTemplates = async () => {
+    setIsSyncing(true);
+    try {
+      const res = await fetch('/api/message-templates/restore', { method: 'POST' });
+      const data = await res.json();
+      if (data.templates) {
+        setMessageTemplates(data.templates);
+      }
+      playSound('sino');
+      showToast('7 modelos profissionais restaurados com sucesso!');
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const renderMessageTemplate = useCallback((templateContent: string, client: Partial<Client>, customMethod?: PaymentMethodItem): string => {
+    const defaultMethod = paymentMethods.find(m => m.isDefault && m.ativo) || paymentMethods.find(m => m.ativo) || paymentMethods[0];
+    const method = customMethod || defaultMethod;
+    
+    // Pix key: first active pix method or billingConfig
+    const activePix = paymentMethods.find(m => m.tipo.startsWith('pix') && m.ativo);
+    const chavePix = activePix ? activePix.chaveOuLink : (settings.billingConfig?.chavePix || 'e4447e6e-1cef-4c99-a120-039875053ed5');
+    
+    // Mercado Pago link: first active mercadopago or billingConfig
+    const activeMp = paymentMethods.find(m => m.tipo === 'mercadopago' && m.ativo);
+    const linkPagamento = activeMp?.chaveOuLink || settings.billingConfig?.linkPagamento || '';
+
+    const beneficiario = method?.beneficiario || settings.billingConfig?.beneficiario || 'Gerenciapró — Movieplay';
+    
+    let formaDetalhe = '';
+    if (method) {
+      if (method.tipo.startsWith('pix')) {
+        formaDetalhe = `🔑 *Chave Pix (${method.nome}):*\n\`${method.chaveOuLink}\`\n👤 *Beneficiário:* ${beneficiario}`;
+      } else if (method.tipo === 'mercadopago') {
+        formaDetalhe = method.chaveOuLink 
+          ? `💳 *Link de Pagamento Mercado Pago:*\n${method.chaveOuLink}`
+          : `🔑 *Chave Pix:* \`${chavePix}\`\n👤 *Beneficiário:* ${beneficiario}`;
+      } else {
+        formaDetalhe = `💰 *Forma de Pagamento (${method.nome}):*\n${method.chaveOuLink}`;
+      }
+    } else {
+      formaDetalhe = `🔑 *Chave Pix:*\n\`${chavePix}\`\n👤 *Beneficiário:* ${beneficiario}`;
+    }
+
+    return (templateContent || '')
+      .replace(/{{nome}}|{nome}/gi, client.nome || '')
+      .replace(/{{plano}}|{plano}/gi, client.plano || 'Mensal')
+      .replace(/{{valor}}|{valor}/gi, Number(client.valor || 20).toFixed(2))
+      .replace(/{{vencimento}}|{vencimento}/gi, client.vencimento || '')
+      .replace(/{{chave_pix}}|{chave_pix}|{{pix}}|{pix}/gi, chavePix)
+      .replace(/{{link_pagamento}}|{link_pagamento}|{{link}}|{link}/gi, linkPagamento || 'Solicite o link atualizado')
+      .replace(/{{forma_pagamento_detalhe}}|{forma_pagamento_detalhe}|{{forma_pagamento_info}}|{forma_pagamento_info}/gi, formaDetalhe)
+      .replace(/{{beneficiario}}|{beneficiario}/gi, beneficiario)
+      .replace(/{{servidor}}|{servidor}/gi, client.servidor || 'Cine Hub')
+      .replace(/{{aplicativo}}|{aplicativo}/gi, client.aplicativo || 'XCIPTV')
+      .replace(/{{usuario}}|{usuario}|{{usuariodisp}}|{usuariodisp}/gi, client.usuarioDisp || '')
+      .replace(/{{senha}}|{senha}|{{senhadisp}}|{senhadisp}/gi, client.senhaDisp || '')
+      .replace(/{{mac}}|{mac}/gi, client.mac || '')
+      .replace(/{{whatsapp}}|{whatsapp}/gi, client.whatsapp || client.celular || '');
+  }, [paymentMethods, settings.billingConfig]);
 
   // --- AUTOMATIONS & WHATSAPP ---
 
@@ -804,18 +1117,36 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         renewClientPlan,
         importClientsBatch,
         addServer,
+        updateServer,
         deleteServer,
+        serverDeposits,
+        addServerDeposit,
+        deleteServerDeposit,
         addPlan,
         updatePlan,
         deletePlan,
         addPayment,
         confirmPayment,
+        paymentMethods,
+        addPaymentMethod,
+        updatePaymentMethod,
+        deletePaymentMethod,
+        setDefaultPaymentMethod,
+        togglePaymentMethod,
+        messageTemplates,
+        addMessageTemplate,
+        updateMessageTemplate,
+        deleteMessageTemplate,
+        duplicateMessageTemplate,
+        restoreDefaultTemplates,
+        renderMessageTemplate,
         updateAutomations,
         sendWhatsAppReminder,
         updateSettings,
         updateBillingConfig,
         updateAlertSchedule,
-        restoreDatabase
+        restoreDatabase,
+        updateUser
       }}
     >
       {children}

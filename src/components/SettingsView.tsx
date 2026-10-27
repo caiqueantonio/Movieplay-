@@ -31,7 +31,8 @@ export const SettingsView: React.FC = () => {
     updatePlan,
     deletePlan,
     clients,
-    playSound
+    playSound,
+    setActiveTab
   } = useApp();
 
   const [appName, setAppName] = useState(settings.appName || 'Gerenciapró');
@@ -349,18 +350,29 @@ export const SettingsView: React.FC = () => {
 
       {/* 5. Gerenciar Servidores (matching tela5..png) */}
       <div className="bg-[#0c0e15] border border-[#1b1f2e] rounded-2xl p-5 md:p-6 space-y-4">
-        <div className="flex items-center gap-2.5">
-          <div className="p-2 bg-red-950/80 rounded-xl border border-red-900/60 text-red-500">
-            <Server size={18} />
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div className="flex items-center gap-2.5">
+            <div className="p-2 bg-red-950/80 rounded-xl border border-red-900/60 text-red-500">
+              <Server size={18} />
+            </div>
+            <div>
+              <h2 className="font-display text-base font-bold text-white tracking-wide">
+                Gerenciar Servidores
+              </h2>
+              <p className="text-xs text-gray-400">
+                Adicione e remova servidores disponíveis no cadastro de clientes.
+              </p>
+            </div>
           </div>
-          <div>
-            <h2 className="font-display text-base font-bold text-white tracking-wide">
-              Gerenciar Servidores
-            </h2>
-            <p className="text-xs text-gray-400">
-              Adicione e remova servidores disponíveis no cadastro de clientes.
-            </p>
-          </div>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('servidores')}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600/40 text-red-400 border border-red-600/50 text-xs font-semibold transition-all self-start sm:self-auto"
+          >
+            <span>Abrir Aba Servidores</span>
+            <ExternalLink size={12} />
+          </button>
         </div>
 
         <form onSubmit={handleAddServer} className="flex gap-2.5 pt-2">

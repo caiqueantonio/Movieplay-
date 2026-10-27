@@ -81,7 +81,7 @@ export function normalizeHeader(h: string): string {
 }
 
 export function parseExcelBuffer(buffer: ArrayBuffer, existingClients: Client[]): ImportResult {
-  const workbook = XLSX.read(buffer, { type: 'array' });
+  const workbook = XLSX.read(buffer, { type: 'array', raw: true });
   const sheetName = workbook.SheetNames.find(n => n.toLowerCase().includes('cliente')) || workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
 
@@ -89,8 +89,8 @@ export function parseExcelBuffer(buffer: ArrayBuffer, existingClients: Client[])
     throw new Error('Nenhuma planilha encontrada no arquivo.');
   }
 
-  // Get raw JSON rows
-  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: '' });
+  // Get raw JSON rows preserving exact text and Brazilian dates
+  const rawRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(worksheet, { defval: '', raw: true });
   const headers = Object.keys(rawRows[0] || {});
 
   const validRows: ImportPreviewRow[] = [];

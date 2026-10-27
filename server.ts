@@ -9,9 +9,24 @@ import {
   INITIAL_PLANS,
   INITIAL_AUTOMATIONS,
   INITIAL_SETTINGS,
-  INITIAL_USER
+  INITIAL_USER,
+  INITIAL_PAYMENT_METHODS,
+  INITIAL_MESSAGE_TEMPLATES,
+  INITIAL_SERVER_DEPOSITS
 } from './src/data/initialData.ts';
-import { Client, ServerItem, PlanItem, PaymentRecord, AutomationRule, AppSettings, UserAccount, NotificationLog } from './src/types/index.ts';
+import {
+  Client,
+  ServerItem,
+  ServerDeposit,
+  PlanItem,
+  PaymentRecord,
+  AutomationRule,
+  AppSettings,
+  UserAccount,
+  NotificationLog,
+  PaymentMethodItem,
+  MessageTemplate
+} from './src/types/index.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -24,6 +39,9 @@ interface DatabaseSchema {
   servers: ServerItem[];
   plans: PlanItem[];
   payments: PaymentRecord[];
+  paymentMethods: PaymentMethodItem[];
+  messageTemplates: MessageTemplate[];
+  serverDeposits: ServerDeposit[];
   automations: AutomationRule[];
   notificationLogs: NotificationLog[];
   settings: AppSettings;
@@ -40,7 +58,28 @@ function loadDatabase(): DatabaseSchema {
   if (fs.existsSync(DB_FILE)) {
     try {
       const data = fs.readFileSync(DB_FILE, 'utf-8');
-      return JSON.parse(data);
+      const parsed = JSON.parse(data);
+      if (!parsed.paymentMethods || parsed.paymentMethods.length === 0) {
+        parsed.paymentMethods = INITIAL_PAYMENT_METHODS;
+      }
+      if (!parsed.messageTemplates || parsed.messageTemplates.length === 0) {
+        parsed.messageTemplates = INITIAL_MESSAGE_TEMPLATES;
+      }
+      if (!parsed.serverDeposits || parsed.serverDeposits.length === 0) {
+        parsed.serverDeposits = INITIAL_SERVER_DEPOSITS;
+      }
+      // Ensure servers have links if missing
+      if (parsed.servers && parsed.servers.length > 0) {
+        parsed.servers = parsed.servers.map((s: any) => {
+          const match = INITIAL_SERVERS.find((is: any) => is.nome.toLowerCase() === s.nome.toLowerCase());
+          return {
+            ...s,
+            linkAcesso: s.linkAcesso || match?.linkAcesso || '',
+            corTema: s.corTema || match?.corTema || '#ef4444'
+          };
+        });
+      }
+      return parsed;
     } catch (err) {
       console.error('Error reading db.json, re-initializing', err);
     }
@@ -50,7 +89,7 @@ function loadDatabase(): DatabaseSchema {
   const initialPayments: PaymentRecord[] = [
     {
       id: 'pay-01',
-      clienteId: 'cli-09',
+      clienteId: 'cli-19',
       clienteNome: 'Beto vaqueiro',
       planoNome: 'Mensal',
       valorOriginal: 20.00,
@@ -66,17 +105,17 @@ function loadDatabase(): DatabaseSchema {
     },
     {
       id: 'pay-02',
-      clienteId: 'cli-23',
-      clienteNome: 'Rodrigo Peixoto',
+      clienteId: 'cli-24',
+      clienteNome: 'Gordin',
       planoNome: 'Anual',
-      valorOriginal: 160.00,
+      valorOriginal: 150.00,
       desconto: 0,
-      valorFinal: 160.00,
-      dataCriacao: '2025-10-28',
-      dataVencimento: '2026-10-28',
+      valorFinal: 150.00,
+      dataCriacao: '2025-12-12',
+      dataVencimento: '2026-12-12',
       formaPagamento: 'pix',
       status: 'pago',
-      dataConfirmacao: '2025-10-28',
+      dataConfirmacao: '2025-12-12',
       transacaoId: 'PIX-11223344',
       observacoes: 'Assinatura anual'
     }
@@ -87,6 +126,9 @@ function loadDatabase(): DatabaseSchema {
     servers: INITIAL_SERVERS,
     plans: INITIAL_PLANS,
     payments: initialPayments,
+    paymentMethods: INITIAL_PAYMENT_METHODS,
+    messageTemplates: INITIAL_MESSAGE_TEMPLATES,
+    serverDeposits: INITIAL_SERVER_DEPOSITS,
     automations: INITIAL_AUTOMATIONS,
     notificationLogs: [],
     settings: INITIAL_SETTINGS,
@@ -150,6 +192,9 @@ async function startServer() {
       servers: db.servers,
       plans: db.plans,
       payments: db.payments,
+      paymentMethods: db.paymentMethods || INITIAL_PAYMENT_METHODS,
+      messageTemplates: db.messageTemplates || INITIAL_MESSAGE_TEMPLATES,
+      serverDeposits: db.serverDeposits || INITIAL_SERVER_DEPOSITS,
       automations: db.automations,
       notificationLogs: db.notificationLogs,
       settings: db.settings,
@@ -326,10 +371,59 @@ async function startServer() {
     res.status(201).json(newServer);
   });
 
+  app.put('/api/servers/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    const index = db.servers.findIndex(s => s.id === id);
+    if (index !== -1) {
+      db.servers[index] = {
+        ...db.servers[index],
+        ...req.body,
+        id
+      };
+      logAudit(db.user.nome, 'Servidor Atualizado', `Atualizou servidor: ${db.servers[index].nome}`);
+      saveDatabase(db);
+      res.json(db.servers[index]);
+    } else {
+      res.status(404).json({ error: 'Servidor não encontrado' });
+    }
+  });
+
   app.delete('/api/servers/:id', (req: Request, res: Response) => {
     const { id } = req.params;
     db.servers = db.servers.filter(s => s.id !== id);
     logAudit(db.user.nome, 'Remoção de Servidor', `Removeu servidor id ${id}`);
+    saveDatabase(db);
+    res.json({ success: true });
+  });
+
+  // Server Deposits / Investments
+  app.get('/api/server-deposits', (_req: Request, res: Response) => {
+    res.json(db.serverDeposits || []);
+  });
+
+  app.post('/api/server-deposits', (req: Request, res: Response) => {
+    const deposit: ServerDeposit = {
+      id: 'dep-' + Date.now(),
+      servidorId: req.body.servidorId,
+      servidorNome: req.body.servidorNome,
+      data: req.body.data || new Date().toLocaleDateString('pt-BR'),
+      valor: Number(req.body.valor) || 0,
+      periodo: req.body.periodo || 'mensal',
+      observacoes: req.body.observacoes || '',
+      createdAt: new Date().toISOString()
+    };
+    if (!db.serverDeposits) db.serverDeposits = [];
+    db.serverDeposits.unshift(deposit);
+    logAudit(db.user.nome, 'Depósito em Servidor', `Registrou investimento de R$ ${deposit.valor} no servidor ${deposit.servidorNome}`);
+    saveDatabase(db);
+    res.status(201).json(deposit);
+  });
+
+  app.delete('/api/server-deposits/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    if (!db.serverDeposits) db.serverDeposits = [];
+    db.serverDeposits = db.serverDeposits.filter(d => d.id !== id);
+    logAudit(db.user.nome, 'Exclusão de Depósito', `Removeu registro de investimento id ${id}`);
     saveDatabase(db);
     res.json({ success: true });
   });
@@ -415,6 +509,119 @@ async function startServer() {
     res.json({ success: true, payment, client });
   });
 
+  // Payment Methods
+  app.get('/api/payment-methods', (_req: Request, res: Response) => {
+    res.json(db.paymentMethods || INITIAL_PAYMENT_METHODS);
+  });
+
+  app.post('/api/payment-methods', (req: Request, res: Response) => {
+    const isDef = !!req.body.isDefault;
+    if (isDef && db.paymentMethods) {
+      db.paymentMethods.forEach(m => { m.isDefault = false; });
+    }
+    const newMethod: PaymentMethodItem = {
+      id: 'pm-' + Date.now(),
+      nome: req.body.nome || 'Nova Forma de Pagamento',
+      tipo: req.body.tipo || 'pix_aleatoria',
+      chaveOuLink: req.body.chaveOuLink || '',
+      beneficiario: req.body.beneficiario || 'Gerenciapró — Movieplay',
+      ativo: req.body.ativo !== false,
+      isDefault: isDef,
+      descricao: req.body.descricao || ''
+    };
+    if (!db.paymentMethods) db.paymentMethods = [...INITIAL_PAYMENT_METHODS];
+    db.paymentMethods.push(newMethod);
+    logAudit(db.user.nome, 'Forma de Pagamento Cadastrada', `Cadastrou forma: ${newMethod.nome}`);
+    saveDatabase(db);
+    res.status(201).json(newMethod);
+  });
+
+  app.put('/api/payment-methods/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    if (!db.paymentMethods) db.paymentMethods = [...INITIAL_PAYMENT_METHODS];
+    const index = db.paymentMethods.findIndex(m => m.id === id);
+    if (index !== -1) {
+      if (req.body.isDefault) {
+        db.paymentMethods.forEach(m => { m.isDefault = false; });
+      }
+      db.paymentMethods[index] = { ...db.paymentMethods[index], ...req.body, id };
+      logAudit(db.user.nome, 'Forma de Pagamento Atualizada', `Atualizou forma: ${db.paymentMethods[index].nome}`);
+      saveDatabase(db);
+      res.json(db.paymentMethods[index]);
+    } else {
+      res.status(404).json({ error: 'Forma de pagamento não encontrada' });
+    }
+  });
+
+  app.delete('/api/payment-methods/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    if (!db.paymentMethods) db.paymentMethods = [...INITIAL_PAYMENT_METHODS];
+    db.paymentMethods = db.paymentMethods.filter(m => m.id !== id);
+    logAudit(db.user.nome, 'Forma de Pagamento Removida', `Excluiu forma id ${id}`);
+    saveDatabase(db);
+    res.json({ success: true });
+  });
+
+  // Message Templates Manager
+  app.get('/api/message-templates', (_req: Request, res: Response) => {
+    res.json(db.messageTemplates || INITIAL_MESSAGE_TEMPLATES);
+  });
+
+  app.post('/api/message-templates', (req: Request, res: Response) => {
+    const newTemplate: MessageTemplate = {
+      id: 'tmpl-' + Date.now(),
+      nome: req.body.nome || 'Novo Modelo de Cobrança',
+      categoria: req.body.categoria || 'cobranca_mensal',
+      categoriaNome: req.body.categoriaNome || 'Cobrança de mensalidade',
+      plano: req.body.plano || 'Todos',
+      formaPagamentoId: req.body.formaPagamentoId || 'padrao',
+      conteudo: req.body.conteudo || '',
+      isDefault: false,
+      createdAt: new Date().toISOString().split('T')[0],
+      updatedAt: new Date().toISOString()
+    };
+    if (!db.messageTemplates) db.messageTemplates = [...INITIAL_MESSAGE_TEMPLATES];
+    db.messageTemplates.push(newTemplate);
+    logAudit(db.user.nome, 'Novo Modelo de Mensagem', `Criou modelo: ${newTemplate.nome}`);
+    saveDatabase(db);
+    res.status(201).json(newTemplate);
+  });
+
+  app.put('/api/message-templates/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    if (!db.messageTemplates) db.messageTemplates = [...INITIAL_MESSAGE_TEMPLATES];
+    const index = db.messageTemplates.findIndex(t => t.id === id);
+    if (index !== -1) {
+      db.messageTemplates[index] = {
+        ...db.messageTemplates[index],
+        ...req.body,
+        id,
+        updatedAt: new Date().toISOString()
+      };
+      logAudit(db.user.nome, 'Modelo de Mensagem Editado', `Editou modelo: ${db.messageTemplates[index].nome}`);
+      saveDatabase(db);
+      res.json(db.messageTemplates[index]);
+    } else {
+      res.status(404).json({ error: 'Modelo não encontrado' });
+    }
+  });
+
+  app.delete('/api/message-templates/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    if (!db.messageTemplates) db.messageTemplates = [...INITIAL_MESSAGE_TEMPLATES];
+    db.messageTemplates = db.messageTemplates.filter(t => t.id !== id);
+    logAudit(db.user.nome, 'Modelo de Mensagem Excluído', `Excluiu modelo id ${id}`);
+    saveDatabase(db);
+    res.json({ success: true });
+  });
+
+  app.post('/api/message-templates/restore', (_req: Request, res: Response) => {
+    db.messageTemplates = [...INITIAL_MESSAGE_TEMPLATES];
+    logAudit(db.user.nome, 'Restauração de Modelos', 'Restaurou os 7 modelos profissionais padrão de mensagens');
+    saveDatabase(db);
+    res.json({ success: true, templates: db.messageTemplates });
+  });
+
   // Automations
   app.get('/api/automations', (_req: Request, res: Response) => {
     res.json(db.automations);
@@ -478,6 +685,9 @@ async function startServer() {
       servers: restored.servers || db.servers,
       plans: restored.plans || db.plans,
       payments: restored.payments || [],
+      paymentMethods: restored.paymentMethods || db.paymentMethods,
+      messageTemplates: restored.messageTemplates || db.messageTemplates,
+      serverDeposits: restored.serverDeposits || db.serverDeposits || [],
       automations: restored.automations || db.automations,
       notificationLogs: restored.notificationLogs || [],
       settings: restored.settings || db.settings,

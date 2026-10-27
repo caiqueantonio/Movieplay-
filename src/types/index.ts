@@ -14,7 +14,8 @@ export interface Client {
   aplicativo: string;    // 9. Aplicativo
   usuarioDisp: string;   // 10. Usuário Disp.
   senhaDisp: string;     // 11. Senha Disp.
-  appPago: boolean;      // 12. App Pago
+  appPago: boolean;      // 12. App Pago (Sim / Não)
+  appPagoStatus?: 'recebido' | 'pendente'; // Status do pagamento do app pago
   validadeApp: string;   // 13. Validade App
   plano: string;         // 14. Plano (Mensal, Trimestral, Semestral, Anual, etc.)
   vencimento: string;    // 15. Vencimento (YYYY-MM-DD ou DD/MM/YYYY)
@@ -45,8 +46,22 @@ export interface ServerItem {
   nome: string;
   descricao: string;
   status: 'ativo' | 'inativo';
+  linkAcesso?: string; // URL / Link para redirecionar ao servidor
+  logoUrl?: string;    // Imagem do servidor para fácil reconhecimento visual
+  corTema?: string;    // Cor de destaque
   observacoes?: string;
   createdAt: string;
+}
+
+export interface ServerDeposit {
+  id: string;
+  servidorId: string;
+  servidorNome: string;
+  data: string; // YYYY-MM-DD ou DD/MM/AAAA
+  valor: number; // Valor depositado/recarregado no servidor
+  periodo: 'mensal' | 'semanal' | 'quinzenal' | 'avulso';
+  observacoes?: string;
+  createdAt?: string;
 }
 
 export interface PlanItem {
@@ -58,6 +73,42 @@ export interface PlanItem {
   chavePix: string;
   status: 'ativo' | 'inativo';
   descricao?: string;
+}
+
+export type PaymentMethodType = 'pix_aleatoria' | 'pix_celular' | 'mercadopago' | 'dinheiro' | 'cartao' | 'outro';
+
+export interface PaymentMethodItem {
+  id: string;
+  nome: string;
+  tipo: PaymentMethodType;
+  chaveOuLink: string;
+  beneficiario?: string;
+  ativo: boolean;
+  isDefault?: boolean;
+  descricao?: string;
+}
+
+export type MessageCategory = 
+  | 'cobranca_mensal' 
+  | 'cobranca_semestral' 
+  | 'cobranca_anual' 
+  | 'aviso_pix' 
+  | 'lembrete_vencimento' 
+  | 'aviso_atraso' 
+  | 'confirmacao_pagamento'
+  | string;
+
+export interface MessageTemplate {
+  id: string;
+  nome: string;
+  categoria: MessageCategory;
+  categoriaNome: string;
+  plano: string; // 'Todos' | 'Mensal' | 'Semestral' | 'Anual' | etc.
+  formaPagamentoId: string; // id de PaymentMethodItem ou 'padrao'
+  conteudo: string;
+  isDefault?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
 }
 
 export type PaymentStatus = 'rascunho' | 'pendente' | 'aguardando' | 'pago' | 'vencido' | 'cancelado' | 'estornado';
@@ -159,4 +210,5 @@ export interface UserAccount {
   email: string;
   role: 'admin' | 'operador';
   avatar?: string;
+  provider?: 'google' | 'local';
 }

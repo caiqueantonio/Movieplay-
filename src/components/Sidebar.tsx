@@ -2,6 +2,7 @@ import React from 'react';
 import {
   LayoutDashboard,
   Users,
+  Server,
   Banknote,
   Zap,
   Download,
@@ -27,11 +28,12 @@ export const Sidebar: React.FC<SidebarProps> = ({
   setMobileOpen,
   onLogout
 }) => {
-  const { activeTab, setActiveTab, settings, playSound, clients } = useApp();
+  const { activeTab, setActiveTab, settings, playSound, clients, user } = useApp();
 
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
     { id: 'clientes', label: 'Clientes', icon: Users },
+    { id: 'servidores', label: 'Servidores', icon: Server },
     { id: 'cobrancas', label: 'Cobranças', icon: Banknote },
     { id: 'automacoes', label: 'Automações', icon: Zap },
     { id: 'baixar-app', label: 'Baixar App', icon: Download },
@@ -133,15 +135,41 @@ export const Sidebar: React.FC<SidebarProps> = ({
           })}
         </nav>
 
-        {/* Bottom Sair */}
-        <div className="p-3 border-t border-[#161824]">
+        {/* Bottom User Info & Sair */}
+        <div className="p-3 border-t border-[#161824] space-y-2">
+          {!collapsed && user && (
+            <div className="p-2.5 rounded-xl bg-[#0c0d13] border border-[#1b1e2c] flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-[#141724] border border-[#23273a] flex items-center justify-center shrink-0">
+                {user.provider === 'google' ? (
+                  <svg className="w-4 h-4" viewBox="0 0 24 24">
+                    <path fill="#EA4335" d="M12 5c1.6 0 3 .6 4.1 1.7l3.1-3.1C17.3 1.8 14.8 1 12 1 7.5 1 3.7 3.6 1.9 7.3l3.7 2.9C6.5 7.3 9 5 12 5z" />
+                    <path fill="#4285F4" d="M23.5 12.3c0-.8-.1-1.7-.2-2.3H12v4.5h6.5c-.3 1.5-1.1 2.8-2.4 3.7l3.7 2.9c2.2-2 3.7-5 3.7-8.8z" />
+                    <path fill="#FBBC05" d="M5.6 14.8c-.2-.7-.4-1.5-.4-2.8s.2-2.1.4-2.8L1.9 6.3C.7 8.7 0 10.3 0 12s.7 3.3 1.9 5.7l3.7-2.9z" />
+                    <path fill="#34A853" d="M12 23c3.2 0 6-1.1 8-3l-3.7-2.9c-1.1.7-2.5 1.2-4.3 1.2-3 0-5.5-2-6.4-4.8L1.9 16.4C3.7 20.4 7.5 23 12 23z" />
+                  </svg>
+                ) : (
+                  <span className="text-xs font-bold text-red-400">
+                    {(user.nome || 'U').charAt(0).toUpperCase()}
+                  </span>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="text-xs font-semibold text-white truncate">{user.nome || user.email}</p>
+                <div className="flex items-center gap-1.5 mt-0.5">
+                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span className="text-[10px] text-gray-400 truncate">Nuvem Conectada</span>
+                </div>
+              </div>
+            </div>
+          )}
+
           <button
             onClick={onLogout}
-            className="w-full flex items-center gap-3.5 px-3.5 py-3 rounded-xl text-sm font-medium text-gray-400 hover:text-red-400 hover:bg-[#161217] transition-all group"
+            className="w-full flex items-center gap-3.5 px-3.5 py-2.5 rounded-xl text-sm font-medium text-gray-400 hover:text-red-400 hover:bg-[#161217] transition-all group"
             title="Sair do painel"
           >
-            <LogOut size={19} className="shrink-0 text-gray-400 group-hover:text-red-400 transition-colors" />
-            {!collapsed && <span className="truncate">Sair</span>}
+            <LogOut size={18} className="shrink-0 text-gray-400 group-hover:text-red-400 transition-colors" />
+            {!collapsed && <span className="truncate">Sair da Conta</span>}
           </button>
         </div>
       </aside>

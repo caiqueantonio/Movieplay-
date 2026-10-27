@@ -27,7 +27,8 @@ import {
   Cake,
   Gift,
   Archive,
-  ArchiveRestore
+  ArchiveRestore,
+  Clock
 } from 'lucide-react';
 import { Client, ClientStatus } from '../types';
 import { useApp } from '../context/AppContext';
@@ -65,6 +66,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({
   const [showPassword, setShowPassword] = useState(false);
   const [showMacPassword, setShowMacPassword] = useState(false);
   const [localFeedback, setLocalFeedback] = useState<string | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   // Renewal quick modal inside
   const [showRenewBox, setShowRenewBox] = useState(false);
@@ -73,7 +75,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Form State with ALL 18 fields + fotoUrl
+  // Form State with ALL 18 fields + fotoUrl + appPagoStatus
   const [formData, setFormData] = useState<Omit<Client, 'id' | 'createdAt' | 'updatedAt'>>({
     nome: '',
     email: '',
@@ -87,6 +89,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({
     usuarioDisp: '',
     senhaDisp: '',
     appPago: false,
+    appPagoStatus: 'pendente',
     validadeApp: '',
     plano: 'Mensal',
     vencimento: new Date().toLocaleDateString('pt-BR'),
@@ -114,6 +117,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({
         usuarioDisp: client.usuarioDisp || '',
         senhaDisp: client.senhaDisp || '',
         appPago: !!client.appPago,
+        appPagoStatus: client.appPagoStatus || (client.appPago ? 'recebido' : 'pendente'),
         validadeApp: client.validadeApp || '',
         plano: client.plano || 'Mensal',
         vencimento: client.vencimento || '',
@@ -139,6 +143,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({
         usuarioDisp: '',
         senhaDisp: '',
         appPago: false,
+        appPagoStatus: 'pendente',
         validadeApp: '',
         plano: 'Mensal',
         vencimento: new Date().toLocaleDateString('pt-BR'),
@@ -196,19 +201,31 @@ export const ClientModal: React.FC<ClientModalProps> = ({
     setTimeout(() => setLocalFeedback(null), 2000);
   };
 
-  const handleSave = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleSave = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
     if (!formData.nome.trim()) {
       alert('O Nome do cliente é obrigatório.');
       return;
     }
 
-    if (mode === 'create') {
-      await addClient(formData);
-    } else if (client) {
-      await updateClient(client.id, formData);
+    setIsSaving(true);
+    try {
+      if (mode === 'create') {
+        await addClient(formData);
+        setLocalFeedback('Cliente cadastrado com sucesso!');
+      } else if (client) {
+        await updateClient(client.id, formData);
+        setLocalFeedback('Alterações salvas com sucesso!');
+      }
+      setTimeout(() => {
+        setIsSaving(false);
+        onClose();
+      }, 350);
+    } catch (err) {
+      console.error('Erro ao salvar cliente:', err);
+      alert('Erro ao salvar cliente. Tente novamente.');
+      setIsSaving(false);
     }
-    onClose();
   };
 
   const handleExecuteRenew = async () => {
@@ -293,13 +310,23 @@ export const ClientModal: React.FC<ClientModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
-            {mode === 'view' && (
+            {mode === 'view' ? (
               <button
                 type="button"
                 onClick={() => setMode('edit')}
                 className="px-3 py-1.5 rounded-xl bg-red-600/20 hover:bg-red-600/40 text-red-400 border border-red-600/50 text-xs font-semibold transition-all shadow-[0_0_8px_rgba(220,38,38,0.2)]"
               >
                 Editar Ficha
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handleSave()}
+                disabled={isSaving}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-[0_0_12px_rgba(220,38,38,0.5)] transition-all disabled:opacity-50"
+              >
+                <Save size={13} />
+                <span>{isSaving ? 'Salvando...' : (mode === 'create' ? 'Cadastrar' : 'Salvar')}</span>
               </button>
             )}
             <button
@@ -821,22 +848,76 @@ export const ClientModal: React.FC<ClientModalProps> = ({
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-semibold text-gray-300 mb-1.5">
-                  12. Aplicativo Pago?
-                </label>
-                <div className="flex items-center gap-4 pt-1">
-                  <label className="flex items-center gap-2 cursor-pointer text-xs text-gray-200">
+              {/* 12. Aplicativo Pago com Pergunta e Botões de Confirmação */}
+              <div className="md:col-span-2 bg-[#0d0f18] border border-[#1e2336] rounded-2xl p-3.5 space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <label className="flex items-center gap-3 cursor-pointer select-none">
                     <input
                       type="checkbox"
                       disabled={mode === 'view'}
                       checked={formData.appPago}
-                      onChange={e => setFormData({ ...formData, appPago: e.target.checked })}
-                      className="w-4 h-4 accent-red-600 rounded"
+                      onChange={e => {
+                        const checked = e.target.checked;
+                        setFormData({
+                          ...formData,
+                          appPago: checked,
+                          appPagoStatus: checked ? (formData.appPagoStatus || 'pendente') : undefined
+                        });
+                      }}
+                      className="w-4 h-4 accent-red-600 rounded cursor-pointer"
                     />
-                    <span>Sim, licença paga</span>
+                    <span className="text-xs sm:text-sm font-semibold text-white">
+                      12. O cliente utiliza aplicativo pago?
+                    </span>
                   </label>
+                  {formData.appPago && (
+                    <span className={`text-[11px] font-bold px-2.5 py-0.5 rounded-full border ${
+                      formData.appPagoStatus === 'recebido'
+                        ? 'bg-emerald-950/80 text-emerald-400 border-emerald-700/60 shadow-[0_0_8px_rgba(16,185,129,0.3)]'
+                        : 'bg-amber-950/80 text-amber-300 border-amber-700/60 shadow-[0_0_8px_rgba(245,158,11,0.3)]'
+                    }`}>
+                      {formData.appPagoStatus === 'recebido' ? '✓ Pagamento Recebido' : '⏳ Pagamento Pendente'}
+                    </span>
+                  )}
                 </div>
+
+                {formData.appPago && (
+                  <div className="pt-2 border-t border-[#1a1f30] space-y-2 animate-in fade-in duration-200">
+                    <div className="text-[11px] text-gray-300 font-medium flex items-center gap-1.5">
+                      <span>Status do pagamento do aplicativo:</span>
+                      <span className="text-gray-500">(clique para definir)</span>
+                    </div>
+                    <div className="flex flex-wrap items-center gap-2.5">
+                      <button
+                        type="button"
+                        disabled={mode === 'view'}
+                        onClick={() => setFormData({ ...formData, appPagoStatus: 'recebido' })}
+                        className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border transition-all ${
+                          formData.appPagoStatus === 'recebido'
+                            ? 'bg-emerald-600 text-white border-emerald-500 shadow-[0_0_12px_rgba(16,185,129,0.4)]'
+                            : 'bg-[#141826] text-gray-400 border-[#22283d] hover:text-white hover:border-emerald-600/40'
+                        }`}
+                      >
+                        <CheckCircle2 size={14} className={formData.appPagoStatus === 'recebido' ? 'text-white' : 'text-emerald-500'} />
+                        <span>Recebi o pagamento</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        disabled={mode === 'view'}
+                        onClick={() => setFormData({ ...formData, appPagoStatus: 'pendente' })}
+                        className={`flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-xs font-bold border transition-all ${
+                          formData.appPagoStatus === 'pendente'
+                            ? 'bg-amber-600 text-white border-amber-500 shadow-[0_0_12px_rgba(245,158,11,0.4)]'
+                            : 'bg-[#141826] text-gray-400 border-[#22283d] hover:text-white hover:border-amber-600/40'
+                        }`}
+                      >
+                        <Clock size={14} className={formData.appPagoStatus === 'pendente' ? 'text-white' : 'text-amber-400'} />
+                        <span>Ainda está pendente</span>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -1098,18 +1179,28 @@ export const ClientModal: React.FC<ClientModalProps> = ({
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-[#171b29] hover:bg-[#202538] text-gray-300 text-xs font-semibold transition-colors"
+              className="px-4 py-2.5 rounded-xl bg-[#171b29] hover:bg-[#202538] text-gray-300 text-xs font-semibold transition-colors"
             >
-              Fechar
+              {mode === 'view' ? 'Fechar' : 'Cancelar'}
             </button>
 
-            {mode !== 'view' && (
+            {mode === 'view' ? (
               <button
-                type="submit"
-                className="flex items-center gap-1.5 px-5 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-[0_0_15px_rgba(220,38,38,0.5)] transition-all"
+                type="button"
+                onClick={() => setMode('edit')}
+                className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-red-600/30 hover:bg-red-600/50 text-red-300 border border-red-500/60 text-xs font-bold transition-all shadow-[0_0_12px_rgba(220,38,38,0.25)]"
               >
-                <Save size={14} />
-                <span>{mode === 'create' ? 'Cadastrar Cliente' : 'Salvar Alterações'}</span>
+                <span>Editar Ficha</span>
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => handleSave()}
+                disabled={isSaving}
+                className="flex items-center gap-1.5 px-6 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold shadow-[0_0_18px_rgba(220,38,38,0.5)] transition-all disabled:opacity-50"
+              >
+                <Save size={15} />
+                <span>{isSaving ? 'Salvando...' : (mode === 'create' ? 'Cadastrar Cliente' : 'Salvar Alterações')}</span>
               </button>
             )}
           </div>
