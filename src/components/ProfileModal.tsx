@@ -20,12 +20,15 @@ interface ProfileModalProps {
 }
 
 export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onLogout }) => {
-  const { user, playSound } = useApp();
+  const { user, updateUser, playSound, showToast } = useApp();
   const [auditLogs, setAuditLogs] = useState<Array<{ id: string; timestamp: string; usuario: string; acao: string; detalhes: string }>>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
+  const [editingName, setEditingName] = useState(user.nome || '');
+  const [nameSaved, setNameSaved] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
+      setEditingName(user.nome || '');
       setLoadingLogs(true);
       fetch('/api/bootstrap')
         .then(res => res.json())
@@ -35,17 +38,27 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onL
         .catch(() => {})
         .finally(() => setLoadingLogs(false));
     }
-  }, [isOpen]);
+  }, [isOpen, user.nome]);
+
+  const handleSaveName = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingName.trim()) return;
+    await updateUser({ nome: editingName.trim() });
+    setNameSaved(true);
+    playSound('sino');
+    showToast('Nome de exibição atualizado!');
+    setTimeout(() => setNameSaved(false), 2500);
+  };
 
   if (!isOpen) return null;
 
   return (
     <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-[#0e1017] border border-[#222738] rounded-3xl max-w-xl w-full p-6 space-y-6 shadow-2xl animate-in fade-in">
+      <div className="bg-[#0e1017] border border-[#222738] rounded-3xl max-w-xl w-full p-6 space-y-5 shadow-2xl animate-in fade-in">
         <div className="flex items-center justify-between pb-3 border-b border-[#1b1f2e]">
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-2xl bg-red-600 text-white font-extrabold text-lg flex items-center justify-center shadow-[0_0_15px_rgba(220,38,38,0.5)]">
-              C
+              {(editingName || user.nome || 'C').charAt(0).toUpperCase()}
             </div>
             <div>
               <h2 className="font-display text-lg font-bold text-white flex items-center gap-2">
@@ -65,6 +78,38 @@ export const ProfileModal: React.FC<ProfileModalProps> = ({ isOpen, onClose, onL
             <X size={18} />
           </button>
         </div>
+
+        {/* Alterar Nome de Exibição Visível */}
+        <form onSubmit={handleSaveName} className="bg-[#121522] border border-[#202538] rounded-2xl p-4 space-y-2.5">
+          <div className="flex items-center justify-between">
+            <label className="text-xs font-bold text-gray-200 flex items-center gap-1.5">
+              <span>Alterar Nome de Exibição no Topo</span>
+              <span className="text-[10px] text-gray-400 font-normal hidden sm:inline">(Exibido no painel inicial)</span>
+            </label>
+            {nameSaved && (
+              <span className="text-[11px] text-emerald-400 font-semibold flex items-center gap-1 animate-in fade-in">
+                <CheckCircle2 size={13} />
+                <span>Salvo com sucesso!</span>
+              </span>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              required
+              value={editingName}
+              onChange={e => setEditingName(e.target.value)}
+              placeholder="Digite o nome desejado..."
+              className="flex-1 bg-[#090b12] border border-[#232a3d] focus:border-red-600 rounded-xl px-3.5 py-2 text-xs text-white outline-none"
+            />
+            <button
+              type="submit"
+              className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-all shadow-[0_0_10px_rgba(220,38,38,0.4)] shrink-0"
+            >
+              Salvar Nome
+            </button>
+          </div>
+        </form>
 
         {/* Permissions & Security Summary */}
         <div className="grid grid-cols-2 gap-3 text-xs">

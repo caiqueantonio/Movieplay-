@@ -667,6 +667,18 @@ async function startServer() {
     res.json(db.settings);
   });
 
+  // User Profile & Display Name
+  app.get('/api/user', (_req: Request, res: Response) => {
+    res.json(db.user);
+  });
+
+  app.put('/api/user', (req: Request, res: Response) => {
+    db.user = { ...db.user, ...req.body };
+    logAudit(db.user.nome, 'Perfil Atualizado', `Nome de exibição alterado para: ${db.user.nome}`);
+    saveDatabase(db);
+    res.json(db.user);
+  });
+
   // Backup & Restore
   app.get('/api/backup', (_req: Request, res: Response) => {
     res.setHeader('Content-Type', 'application/json');

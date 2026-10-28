@@ -83,6 +83,7 @@ export interface PaymentMethodItem {
   tipo: PaymentMethodType;
   chaveOuLink: string;
   beneficiario?: string;
+  bancoRecebedor?: string;
   ativo: boolean;
   isDefault?: boolean;
   descricao?: string;
@@ -169,6 +170,7 @@ export interface BillingConfig {
   chavePix: string;
   tipoChavePix: 'cpf_cnpj' | 'email' | 'celular' | 'aleatoria';
   beneficiario: string;
+  bancoRecebedor?: string;
   linkPagamento: string;
   descricao: string;
   instrucoes: string;

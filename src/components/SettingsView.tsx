@@ -41,9 +41,6 @@ export const SettingsView: React.FC = () => {
   const [primaryColor, setPrimaryColor] = useState(settings.primaryColor || '#dc2626');
   const [adminWhatsapp, setAdminWhatsapp] = useState(settings.adminWhatsapp || '');
   const [contatoUrl, setContatoUrl] = useState(settings.contatoUrl || '');
-  const [devPassword, setDevPassword] = useState('');
-  const [devUnlocked, setDevUnlocked] = useState(false);
-  const [devError, setDevError] = useState(false);
 
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
 
@@ -104,38 +101,6 @@ export const SettingsView: React.FC = () => {
     triggerSaved('Novo plano adicionado!');
   };
 
-  const handleDevUnlock = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (devPassword === 'Senhacontrahacker1!') {
-      setDevUnlocked(true);
-      setDevError(false);
-    } else {
-      setDevError(true);
-    }
-  };
-
-  const handleExportSingleHTML = () => {
-    // Generate lightweight standalone snapshot
-    const htmlSnapshot = `<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8">
-  <title>${settings.appName} — Snapshot</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-</head>
-<body class="bg-[#090a0f] text-gray-100 p-8">
-  <h1 class="text-3xl font-bold text-red-500 mb-4">${settings.appName} — Exportação Monolítica</h1>
-  <p class="text-gray-400 mb-6">Total de clientes exportados: ${clients.length}</p>
-  <pre class="bg-[#111420] p-4 rounded-xl text-xs overflow-auto">${JSON.stringify(clients, null, 2)}</pre>
-</body>
-</html>`;
-    const blob = new Blob([htmlSnapshot], { type: 'text/html' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = `gerenciapro-snapshot-${Date.now()}.html`;
-    a.click();
-    playSound('sino');
-  };
 
   return (
     <div className="space-y-6 max-w-4xl pb-16 animate-in fade-in duration-200">
@@ -485,93 +450,6 @@ export const SettingsView: React.FC = () => {
             </div>
           ))}
         </div>
-      </div>
-
-      {/* 7. Área do Desenvolvedor — Visualizar Código & Exportar */}
-      <div className="bg-[#0c0e15] border border-[#1b1f2e] rounded-2xl p-5 md:p-6 space-y-4">
-        <div className="flex items-center gap-2.5">
-          <div className="p-2 bg-[#1b2030] rounded-xl border border-[#2b334d] text-gray-300">
-            <Lock size={18} />
-          </div>
-          <div>
-            <h2 className="font-display text-base font-bold text-white tracking-wide">
-              Área do Desenvolvedor — Visualizar Código & Exportar
-            </h2>
-            <p className="text-xs text-gray-400">
-              Acesso protegido para inspeção de código-fonte, banco de dados e exportação de snapshot monolítico.
-            </p>
-          </div>
-        </div>
-
-        {!devUnlocked ? (
-          <form onSubmit={handleDevUnlock} className="space-y-3 pt-2 max-w-md">
-            <div>
-              <label className="block text-xs font-semibold text-gray-400 mb-1.5">
-                Senha de acesso ao código
-              </label>
-              <div className="flex gap-2.5">
-                <input
-                  type="password"
-                  value={devPassword}
-                  onChange={e => {
-                    setDevPassword(e.target.value);
-                    setDevError(false);
-                  }}
-                  placeholder="Digite a senha..."
-                  className="flex-1 bg-[#121522] border border-[#23293c] focus:border-red-600 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none font-mono-code"
-                />
-                <button
-                  type="submit"
-                  className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold transition-all shadow-[0_0_12px_#dc2626]"
-                >
-                  Acessar Código
-                </button>
-              </div>
-            </div>
-
-            {devError && (
-              <p className="text-xs font-semibold text-red-500 flex items-center gap-1.5">
-                <span>⛔ Senha incorreta. Acesso negado.</span>
-              </p>
-            )}
-          </form>
-        ) : (
-          <div className="pt-2 space-y-4 animate-in fade-in">
-            <div className="p-4 bg-emerald-950/40 border border-emerald-800/40 rounded-xl text-emerald-400 text-xs font-semibold flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="flex items-center gap-2">
-                <Check size={16} />
-                <span>Área do Desenvolvedor Desbloqueada com Senha Segura</span>
-              </div>
-              <button
-                onClick={handleExportSingleHTML}
-                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-xs font-bold transition-all shadow-[0_0_12px_#dc2626] shrink-0"
-              >
-                Baixar Snapshot HTML Único
-              </button>
-            </div>
-
-            {/* Code and Database Viewer */}
-            <div className="space-y-2">
-              <span className="text-xs font-bold text-gray-300 block uppercase tracking-wider">
-                Estrutura de Dados e Código Ativo (/data/db.json)
-              </span>
-              <pre className="bg-[#08090f] border border-[#1b1f2e] p-4 rounded-xl text-[11px] font-mono-code text-gray-300 max-h-64 overflow-y-auto overflow-x-auto leading-relaxed select-all">
-                {JSON.stringify(
-                  {
-                    app: settings.appName,
-                    versao: '2.5.0-premium',
-                    totalClientes: clients.length,
-                    servidores: servers.map(s => s.nome),
-                    planos: plans.map(p => ({ nome: p.nome, valor: p.valorPadrao })),
-                    amostraClientes: clients.slice(0, 3)
-                  },
-                  null,
-                  2
-                )}
-              </pre>
-            </div>
-          </div>
-        )}
       </div>
     </div>
   );

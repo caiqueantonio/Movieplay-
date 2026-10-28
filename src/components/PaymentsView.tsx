@@ -98,13 +98,15 @@ export const PaymentsView: React.FC = () => {
     tipo: PaymentMethodType;
     chaveOuLink: string;
     beneficiario: string;
+    bancoRecebedor: string;
     isDefault: boolean;
     descricao: string;
   }>({
     nome: '',
     tipo: 'pix_aleatoria',
     chaveOuLink: '',
-    beneficiario: 'Gerenciapró — Movieplay',
+    beneficiario: 'Caique Antonio',
+    bancoRecebedor: 'Mercado Pago',
     isDefault: false,
     descricao: ''
   });
@@ -273,7 +275,8 @@ export const PaymentsView: React.FC = () => {
         nome: methodForm.nome,
         tipo: methodForm.tipo,
         chaveOuLink: methodForm.chaveOuLink,
-        beneficiario: methodForm.beneficiario,
+        beneficiario: methodForm.beneficiario || 'Caique Antonio',
+        bancoRecebedor: methodForm.bancoRecebedor || 'Mercado Pago',
         isDefault: methodForm.isDefault,
         descricao: methodForm.descricao
       });
@@ -282,7 +285,8 @@ export const PaymentsView: React.FC = () => {
         nome: methodForm.nome,
         tipo: methodForm.tipo,
         chaveOuLink: methodForm.chaveOuLink,
-        beneficiario: methodForm.beneficiario,
+        beneficiario: methodForm.beneficiario || 'Caique Antonio',
+        bancoRecebedor: methodForm.bancoRecebedor || 'Mercado Pago',
         ativo: true,
         isDefault: methodForm.isDefault,
         descricao: methodForm.descricao
@@ -299,7 +303,8 @@ export const PaymentsView: React.FC = () => {
       nome: method.nome,
       tipo: method.tipo,
       chaveOuLink: method.chaveOuLink,
-      beneficiario: method.beneficiario || 'Gerenciapró — Movieplay',
+      beneficiario: method.beneficiario || 'Caique Antonio',
+      bancoRecebedor: method.bancoRecebedor || 'Mercado Pago',
       isDefault: !!method.isDefault,
       descricao: method.descricao || ''
     });
@@ -312,7 +317,8 @@ export const PaymentsView: React.FC = () => {
       nome: '',
       tipo: 'pix_aleatoria',
       chaveOuLink: '',
-      beneficiario: 'Gerenciapró — Movieplay',
+      beneficiario: 'Caique Antonio',
+      bancoRecebedor: 'Mercado Pago',
       isDefault: false,
       descricao: ''
     });
@@ -843,8 +849,13 @@ Agradecemos muito pela confiança e parceria contínua! Tenha um ótimo dia.`
                       </div>
 
                       {method.beneficiario && (
-                        <div className="text-[11px] text-gray-400">
-                          <span className="text-gray-500">Beneficiário:</span> {method.beneficiario}
+                        <div className="text-[11px] text-gray-400 space-y-0.5 pt-1 border-t border-[#1a1e2f]">
+                          <div>
+                            <span className="text-gray-500 font-medium">Beneficiário:</span> <strong className="text-gray-200">{method.beneficiario}</strong>
+                          </div>
+                          <div>
+                            <span className="text-gray-500 font-medium">Banco recebedor:</span> <strong className="text-emerald-400">{method.bancoRecebedor || 'Mercado Pago'}</strong>
+                          </div>
                         </div>
                       )}
 
@@ -1123,7 +1134,20 @@ Agradecemos muito pela confiança e parceria contínua! Tenha um ótimo dia.`
                   type="text"
                   value={billingForm.beneficiario}
                   onChange={e => setBillingForm({ ...billingForm, beneficiario: e.target.value })}
-                  placeholder="Gerenciapró — Movieplay"
+                  placeholder="Caique Antonio"
+                  className="w-full bg-[#111420] border border-[#202538] focus:border-red-600 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-300 mb-1.5">
+                  Banco Recebedor
+                </label>
+                <input
+                  type="text"
+                  value={billingForm.bancoRecebedor || ''}
+                  onChange={e => setBillingForm({ ...billingForm, bancoRecebedor: e.target.value })}
+                  placeholder="Mercado Pago"
                   className="w-full bg-[#111420] border border-[#202538] focus:border-red-600 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
                 />
               </div>
@@ -1349,7 +1373,7 @@ Agradecemos muito pela confiança e parceria contínua! Tenha um ótimo dia.`
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-gray-300 mb-1">
                     Tipo
@@ -1374,7 +1398,20 @@ Agradecemos muito pela confiança e parceria contínua! Tenha um ótimo dia.`
                     type="text"
                     value={methodForm.beneficiario}
                     onChange={e => setMethodForm({ ...methodForm, beneficiario: e.target.value })}
-                    placeholder="Gerenciapró — Movieplay"
+                    placeholder="Caique Antonio"
+                    className="w-full bg-[#111420] border border-[#202538] focus:border-red-600 rounded-xl px-3 py-2 text-xs text-white outline-none"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-semibold text-gray-300 mb-1">
+                    Banco Recebedor
+                  </label>
+                  <input
+                    type="text"
+                    value={methodForm.bancoRecebedor}
+                    onChange={e => setMethodForm({ ...methodForm, bancoRecebedor: e.target.value })}
+                    placeholder="Mercado Pago"
                     className="w-full bg-[#111420] border border-[#202538] focus:border-red-600 rounded-xl px-3 py-2 text-xs text-white outline-none"
                   />
                 </div>

@@ -309,7 +309,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, [refreshData]);
 
-  const updateUser = useCallback((u: Partial<UserAccount>) => {
+  const updateUser = useCallback(async (u: Partial<UserAccount>) => {
     setUser(prev => {
       const updated = { ...prev, ...u };
       try {
@@ -317,6 +317,16 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       } catch {}
       return updated;
     });
+
+    try {
+      await fetch('/api/user', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(u)
+      });
+    } catch (e) {
+      console.warn('Could not persist user update to server', e);
+    }
   }, []);
 
   // Sound trigger
@@ -921,21 +931,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     const activeMp = paymentMethods.find(m => m.tipo === 'mercadopago' && m.ativo);
     const linkPagamento = activeMp?.chaveOuLink || settings.billingConfig?.linkPagamento || '';
 
-    const beneficiario = method?.beneficiario || settings.billingConfig?.beneficiario || 'Gerenciapró — Movieplay';
+    const beneficiario = method?.beneficiario || settings.billingConfig?.beneficiario || 'Caique Antonio';
+    const bancoRecebedor = method?.bancoRecebedor || settings.billingConfig?.bancoRecebedor || 'Mercado Pago';
     
     let formaDetalhe = '';
     if (method) {
       if (method.tipo.startsWith('pix')) {
-        formaDetalhe = `🔑 *Chave Pix (${method.nome}):*\n\`${method.chaveOuLink}\`\n👤 *Beneficiário:* ${beneficiario}`;
+        formaDetalhe = `🔑 *Chave Pix (${method.nome}):*\n\`${method.chaveOuLink}\`\n👤 *Beneficiário:* ${beneficiario}\n🏦 *Banco recebedor:* ${bancoRecebedor}`;
       } else if (method.tipo === 'mercadopago') {
         formaDetalhe = method.chaveOuLink 
-          ? `💳 *Link de Pagamento Mercado Pago:*\n${method.chaveOuLink}`
-          : `🔑 *Chave Pix:* \`${chavePix}\`\n👤 *Beneficiário:* ${beneficiario}`;
+          ? `💳 *Link de Pagamento Mercado Pago:*\n${method.chaveOuLink}\n👤 *Beneficiário:* ${beneficiario}\n🏦 *Banco recebedor:* ${bancoRecebedor}`
+          : `🔑 *Chave Pix:* \`${chavePix}\`\n👤 *Beneficiário:* ${beneficiario}\n🏦 *Banco recebedor:* ${bancoRecebedor}`;
       } else {
-        formaDetalhe = `💰 *Forma de Pagamento (${method.nome}):*\n${method.chaveOuLink}`;
+        formaDetalhe = `💰 *Forma de Pagamento (${method.nome}):*\n${method.chaveOuLink}\n👤 *Beneficiário:* ${beneficiario}\n🏦 *Banco recebedor:* ${bancoRecebedor}`;
       }
     } else {
-      formaDetalhe = `🔑 *Chave Pix:*\n\`${chavePix}\`\n👤 *Beneficiário:* ${beneficiario}`;
+      formaDetalhe = `🔑 *Chave Pix:*\n\`${chavePix}\`\n👤 *Beneficiário:* ${beneficiario}\n🏦 *Banco recebedor:* ${bancoRecebedor}`;
     }
 
     return (templateContent || '')
@@ -947,6 +958,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       .replace(/{{link_pagamento}}|{link_pagamento}|{{link}}|{link}/gi, linkPagamento || 'Solicite o link atualizado')
       .replace(/{{forma_pagamento_detalhe}}|{forma_pagamento_detalhe}|{{forma_pagamento_info}}|{forma_pagamento_info}/gi, formaDetalhe)
       .replace(/{{beneficiario}}|{beneficiario}/gi, beneficiario)
+      .replace(/{{banco_recebedor}}|{banco_recebedor}|{{banco}}|{banco}/gi, bancoRecebedor)
       .replace(/{{servidor}}|{servidor}/gi, client.servidor || 'Cine Hub')
       .replace(/{{aplicativo}}|{aplicativo}/gi, client.aplicativo || 'XCIPTV')
       .replace(/{{usuario}}|{usuario}|{{usuariodisp}}|{usuariodisp}/gi, client.usuarioDisp || '')

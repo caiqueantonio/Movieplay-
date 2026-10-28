@@ -149,7 +149,8 @@ export const INITIAL_PAYMENT_METHODS: PaymentMethodItem[] = [
     "nome": "Chave Pix Aleatória",
     "tipo": "pix_aleatoria",
     "chaveOuLink": "e4447e6e-1cef-4c99-a120-039875053ed5",
-    "beneficiario": "Gerenciapró — Movieplay",
+    "beneficiario": "Caique Antonio",
+    "bancoRecebedor": "Mercado Pago",
     "ativo": true,
     "isDefault": true,
     "descricao": "Chave Pix Aleatória (EVP) oficial para transferências instantâneas"
@@ -159,7 +160,8 @@ export const INITIAL_PAYMENT_METHODS: PaymentMethodItem[] = [
     "nome": "Chave Pix Celular",
     "tipo": "pix_celular",
     "chaveOuLink": "83986302833",
-    "beneficiario": "Gerenciapró — Movieplay",
+    "beneficiario": "Caique Antonio",
+    "bancoRecebedor": "Mercado Pago",
     "ativo": true,
     "isDefault": false,
     "descricao": "Chave Pix vinculada ao número de telefone celular"
@@ -169,7 +171,8 @@ export const INITIAL_PAYMENT_METHODS: PaymentMethodItem[] = [
     "nome": "Link Mercado Pago",
     "tipo": "mercadopago",
     "chaveOuLink": "",
-    "beneficiario": "Mercado Pago Checkout",
+    "beneficiario": "Caique Antonio",
+    "bancoRecebedor": "Mercado Pago",
     "ativo": true,
     "isDefault": false,
     "descricao": "Link oficial de checkout Mercado Pago para pagamento com Cartão ou Saldo"
@@ -217,7 +220,7 @@ export const INITIAL_MESSAGE_TEMPLATES: MessageTemplate[] = [
     "categoriaNome": "Aviso informativo de chave Pix",
     "plano": "Todos",
     "formaPagamentoId": "padrao",
-    "conteudo": "Olá, {nome}! Seguem nossos dados oficiais para pagamento via Pix:\n\n🔑 *Chave Pix:* {chave_pix}\n👤 *Beneficiário:* {beneficiario}\n💰 *Valor:* R$ {valor}\n📅 *Vencimento:* {vencimento}\n\nApós a transferência, favor enviar o comprovante por aqui para baixa em nosso sistema. Qualquer dúvida estamos sempre à disposição!",
+    "conteudo": "Olá, {nome}! Seguem nossos dados oficiais para pagamento via Pix:\n\n🔑 *Chave Pix:* {chave_pix}\n👤 *Beneficiário:* {beneficiario}\n🏦 *Banco recebedor:* Mercado Pago\n💰 *Valor:* R$ {valor}\n📅 *Vencimento:* {vencimento}\n\nApós a transferência, favor enviar o comprovante por aqui para baixa em nosso sistema. Qualquer dúvida estamos sempre à disposição!",
     "isDefault": true,
     "createdAt": "2026-01-01"
   },
@@ -899,7 +902,8 @@ export const INITIAL_SETTINGS: AppSettings = {
   billingConfig: {
     chavePix: 'e4447e6e-1cef-4c99-a120-039875053ed5',
     tipoChavePix: 'aleatoria',
-    beneficiario: 'Gerenciapró — Movieplay',
+    beneficiario: 'Caique Antonio',
+    bancoRecebedor: 'Mercado Pago',
     linkPagamento: '',
     descricao: 'Assinatura e renovação de acesso ao serviço IPTV',
     instrucoes: 'Após realizar a transferência ou pagamento pelo link, envie o comprovante nesta conversa.',
@@ -910,6 +914,8 @@ Você pode realizar o pagamento pelo link abaixo:
 
 Ou utilize a chave Pix:
 {{chave_pix}}
+👤 Beneficiário: {{beneficiario}}
+🏦 Banco recebedor: {{banco_recebedor}}
 
 Após o pagamento, por favor envie o comprovante por aqui para confirmação imediata. Obrigado!`
   },

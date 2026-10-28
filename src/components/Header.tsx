@@ -240,11 +240,16 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu, onOpenProfil
             </div>
 
             <div className="hidden md:flex flex-col text-left leading-tight">
-              <span className="text-xs font-bold text-gray-200 group-hover:text-white max-w-[130px] truncate">
-                {user.nome || user.email.split('@')[0]}
-              </span>
-              <span className="text-[10px] text-gray-400 font-mono-code truncate max-w-[130px]">
-                {user.email}
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-extrabold text-white group-hover:text-red-400 transition-colors max-w-[140px] truncate">
+                  {user.nome || 'Meu Painel'}
+                </span>
+                <span className="text-[10px] text-gray-500 group-hover:text-red-400 font-bold" title="Clique para alterar o nome visível">
+                  ✎
+                </span>
+              </div>
+              <span className="text-[10px] text-gray-400 font-mono-code truncate max-w-[140px]">
+                {user.email || 'Conta Google Conectada'}
               </span>
             </div>
 
