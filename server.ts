@@ -673,8 +673,15 @@ async function startServer() {
   });
 
   app.put('/api/user', (req: Request, res: Response) => {
-    db.user = { ...db.user, ...req.body };
-    logAudit(db.user.nome, 'Perfil Atualizado', `Nome de exibição alterado para: ${db.user.nome}`);
+    db.user = {
+      id: req.body.id || 'usr-1',
+      nome: req.body.nome || '',
+      email: req.body.email || '',
+      role: req.body.role || 'admin',
+      provider: req.body.provider || 'local',
+      avatar: req.body.avatar
+    };
+    logAudit(db.user.nome || db.user.email, 'Usuário Conectado', `Conta ativa: ${db.user.email}`);
     saveDatabase(db);
     res.json(db.user);
   });

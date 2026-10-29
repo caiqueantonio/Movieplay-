@@ -18,11 +18,26 @@ import { MobileNotificationsModal } from './components/MobileNotificationsModal'
 import { Client, UserAccount } from './types';
 
 function MainApp() {
-  const { activeTab, setActiveTab, clients, toastMessage, activeClientIdToOpen, setActiveClientIdToOpen, updateUser } = useApp();
+  const {
+    activeTab,
+    setActiveTab,
+    clients,
+    toastMessage,
+    activeClientIdToOpen,
+    setActiveClientIdToOpen,
+    loginUser,
+    logoutUser
+  } = useApp();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(true);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    try {
+      return !!localStorage.getItem('gerenciapro_session');
+    } catch {
+      return false;
+    }
+  });
 
   // Client Modal
   const [selectedClient, setSelectedClient] = useState<Client | null>(null);
@@ -70,17 +85,23 @@ function MainApp() {
     setIsClientModalOpen(true);
   };
 
-  const handleLoginSuccess = (userProfile?: Partial<UserAccount>) => {
-    if (userProfile) {
-      updateUser(userProfile);
+  const handleLoginSuccess = async (userProfile?: Partial<UserAccount>) => {
+    if (userProfile && userProfile.email) {
+      const fullUser: UserAccount = {
+        id: userProfile.id || `usr-${Date.now()}`,
+        nome: userProfile.nome || userProfile.email.split('@')[0],
+        email: userProfile.email,
+        role: userProfile.role || 'admin',
+        provider: userProfile.provider || 'local',
+        avatar: userProfile.avatar
+      };
+      await loginUser(fullUser);
     }
     setIsAuthenticated(true);
   };
 
   const handleLogout = () => {
-    try {
-      localStorage.removeItem('gerenciapro_session');
-    } catch {}
+    logoutUser();
     setIsAuthenticated(false);
   };
 

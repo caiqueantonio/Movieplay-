@@ -794,10 +794,25 @@
   "user": {
     "id": "usr-1",
     "nome": "Caique Antonio",
-    "email": "caiqueempreendedorismo@gmail.com",
-    "role": "admin"
+    "email": "caiqueantoniio10@gmail.com",
+    "role": "admin",
+    "provider": "google"
   },
   "auditLogs": [
+    {
+      "id": "aud-1793242696419",
+      "timestamp": "2026-10-29T02:58:16.419Z",
+      "usuario": "Caique Antonio",
+      "acao": "Usuário Conectado",
+      "detalhes": "Conta ativa: caiqueantoniio10@gmail.com"
+    },
+    {
+      "id": "aud-1793242692978",
+      "timestamp": "2026-10-29T02:58:12.978Z",
+      "usuario": "Teste Conta",
+      "acao": "Usuário Conectado",
+      "detalhes": "Conta ativa: teste@gmail.com"
+    },
     {
       "id": "aud-01",
       "timestamp": "2026-10-27T02:59:45.187Z",

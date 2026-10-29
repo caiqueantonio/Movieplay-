@@ -55,7 +55,9 @@ interface AppContextType {
   notificationLogs: NotificationLog[];
   settings: AppSettings;
   user: UserAccount;
-  updateUser: (u: Partial<UserAccount>) => void;
+  updateUser: (u: Partial<UserAccount>) => Promise<void>;
+  loginUser: (newUser: UserAccount) => Promise<void>;
+  logoutUser: () => void;
   
   // Toast & Quick Copy
   toastMessage: string | null;
@@ -252,7 +254,17 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
             }
           });
         }
-        if (data.user) setUser(data.user);
+        // Keep active session if one exists in localStorage, otherwise use data.user
+        try {
+          const activeSession = localStorage.getItem('gerenciapro_session');
+          if (activeSession) {
+            setUser(JSON.parse(activeSession));
+          } else if (data.user) {
+            setUser(data.user);
+          }
+        } catch {
+          if (data.user) setUser(data.user);
+        }
 
         // Check alerts and notify if permissions granted
         if (data.clients && data.settings?.alertSchedule?.pushEnabled) {
@@ -297,17 +309,50 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   }, []);
 
   useEffect(() => {
-    refreshData();
     try {
       const savedSession = localStorage.getItem('gerenciapro_session');
       if (savedSession) {
         const parsed = JSON.parse(savedSession);
-        setUser(prev => ({ ...prev, ...parsed }));
+        setUser(parsed);
       }
     } catch (e) {
       console.warn('Session parse error', e);
     }
+    refreshData();
   }, [refreshData]);
+
+  const loginUser = useCallback(async (newUser: UserAccount) => {
+    // Pure clean replacement of the active account
+    setUser(newUser);
+    try {
+      localStorage.setItem('gerenciapro_session', JSON.stringify(newUser));
+    } catch (e) {
+      console.warn('LocalStorage error', e);
+    }
+
+    try {
+      await fetch('/api/user', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newUser)
+      });
+    } catch (e) {
+      console.warn('Could not persist user update to server', e);
+    }
+  }, []);
+
+  const logoutUser = useCallback(() => {
+    const emptyUser: UserAccount = {
+      id: '',
+      nome: '',
+      email: '',
+      role: 'admin'
+    };
+    setUser(emptyUser);
+    try {
+      localStorage.removeItem('gerenciapro_session');
+    } catch {}
+  }, []);
 
   const updateUser = useCallback(async (u: Partial<UserAccount>) => {
     setUser(prev => {
@@ -1158,7 +1203,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         updateBillingConfig,
         updateAlertSchedule,
         restoreDatabase,
-        updateUser
+        updateUser,
+        loginUser,
+        logoutUser
       }}
     >
       {children}

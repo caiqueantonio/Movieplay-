@@ -78,6 +78,15 @@ export const LoginView: React.FC<LoginViewProps> = ({ onSuccess }) => {
     } catch {}
   }, [googleAccounts]);
 
+  // Clean form state on mount
+  useEffect(() => {
+    setEmail('');
+    setPassword('');
+    setAuthenticatingEmail(null);
+    setShowGoogleModal(false);
+    setErrorMsg('');
+  }, []);
+
   // Open Google Picker
   const handleOpenGooglePicker = () => {
     setErrorMsg('');
