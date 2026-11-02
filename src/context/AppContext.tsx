@@ -33,6 +33,7 @@ import {
   isNotificationSupported
 } from '../utils/notifications';
 import { getUpcomingBirthdays } from '../utils/birthdays';
+import { calculateOneMonthRenewal } from '../utils/dateUtils';
 
 interface UndoAction {
   id: string;
@@ -95,6 +96,8 @@ interface AppContextType {
   deleteClient: (id: string) => Promise<void>;
   bulkDeleteClients: (ids: string[]) => Promise<void>;
   renewClientPlan: (clientId: string, novoVencimento: string, valor?: number, plano?: string, forma?: string) => Promise<void>;
+  smartRenewClient: (clientId: string) => Promise<Client | undefined>;
+  bulkRenewClients: (ids: string[]) => Promise<number>;
   importClientsBatch: (imported: Partial<Client>[], mode: 'append' | 'replace' | 'update') => Promise<void>;
   
   // Server Actions
@@ -608,18 +611,96 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         setPayments(prev => [data.payment, ...prev]);
       }
       playSound('sino');
-      showToast(`Plano de ${data.client.nome} renovado até ${novoVencimento}!`);
+      showToast(`Plano de ${data.client.nome} renovado até ${novoVencimento}! Status: Em dia`);
       setNotifications(prev => [
         {
           id: 'notif-' + Date.now(),
           titulo: 'Plano Renovado!',
-          mensagem: `${data.client.nome} teve o vencimento renovado para ${novoVencimento}`,
+          mensagem: `${data.client.nome} teve o vencimento renovado para ${novoVencimento} (Status: Em dia)`,
           tipo: 'sucesso',
           data: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           lida: false
         },
         ...prev
       ]);
+      return data.client;
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const smartRenewClient = async (clientId: string): Promise<Client | undefined> => {
+    const target = clients.find(c => c.id === clientId);
+    if (!target) return undefined;
+
+    const novoVencimento = calculateOneMonthRenewal(target.vencimento);
+    setIsSyncing(true);
+    try {
+      const res = await fetch('/api/clients/renew', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clientId,
+          novoVencimento,
+          valor: target.valor,
+          plano: target.plano,
+          formaPagamento: 'pix'
+        })
+      });
+      const data = await res.json();
+      if (data.client) {
+        setClients(prev => prev.map(c => c.id === clientId ? data.client : c));
+      }
+      if (data.payment) {
+        setPayments(prev => [data.payment, ...prev]);
+      }
+      playSound('sino');
+      showToast(`Plano de ${target.nome} renovado até ${novoVencimento}! Status: Em dia`);
+      setNotifications(prev => [
+        {
+          id: 'notif-' + Date.now(),
+          titulo: 'Cliente Renovado & Ativado!',
+          mensagem: `${target.nome} renovado até ${novoVencimento} (Status alterado de expirado para Em dia)`,
+          tipo: 'sucesso',
+          data: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          lida: false
+        },
+        ...prev
+      ]);
+      return data.client;
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
+  const bulkRenewClients = async (ids: string[]): Promise<number> => {
+    if (ids.length === 0) return 0;
+    const renewals = ids.map(id => {
+      const c = clients.find(cl => cl.id === id);
+      return {
+        clientId: id,
+        novoVencimento: calculateOneMonthRenewal(c?.vencimento)
+      };
+    });
+
+    setIsSyncing(true);
+    try {
+      const res = await fetch('/api/clients/bulk-renew', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ renewals })
+      });
+      const data = await res.json();
+      if (Array.isArray(data.updatedClients)) {
+        const updatedMap = new Map<string, Client>(data.updatedClients.map((c: Client) => [c.id, c]));
+        setClients(prev => prev.map(c => updatedMap.get(c.id) || c));
+      }
+      if (Array.isArray(data.payments)) {
+        setPayments(prev => [...data.payments, ...prev]);
+      }
+      playSound('sino');
+      showToast(`${ids.length} cliente(s) renovado(s) por +1 mês e com status alterado para Em dia!`);
+      return ids.length;
     } finally {
       setIsSyncing(false);
     }
@@ -1172,6 +1253,8 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         deleteClient,
         bulkDeleteClients,
         renewClientPlan,
+        smartRenewClient,
+        bulkRenewClients,
         importClientsBatch,
         addServer,
         updateServer,

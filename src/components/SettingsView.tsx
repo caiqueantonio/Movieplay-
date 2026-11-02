@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Upload,
   Play,
@@ -14,10 +14,33 @@ import {
   Server,
   FileCode,
   Smartphone,
-  ExternalLink
+  ExternalLink,
+  Bell,
+  CheckCircle2,
+  AlertTriangle,
+  RefreshCw,
+  Send,
+  Radio,
+  HelpCircle,
+  Zap,
+  ShieldCheck,
+  Power,
+  Clock
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { soundEffects } from '../utils/audio';
+import {
+  registerDeviceForPush,
+  unregisterDeviceFromPush,
+  fetchConnectedDevices,
+  removeDeviceById,
+  sendTestPushToAll,
+  triggerManualAlertsDispatch,
+  detectDeviceName,
+  getCurrentPushSubscription,
+  isPushNotificationSupported
+} from '../utils/webPush';
+import { PushDeviceSubscription, AlertScheduleConfig } from '../types';
 
 export const SettingsView: React.FC = () => {
   const {
@@ -43,6 +66,44 @@ export const SettingsView: React.FC = () => {
   const [contatoUrl, setContatoUrl] = useState(settings.contatoUrl || '');
 
   const [savedNotice, setSavedNotice] = useState<string | null>(null);
+
+  // Push Notifications & Connected Devices State
+  const [devices, setDevices] = useState<PushDeviceSubscription[]>([]);
+  const [isRegistering, setIsRegistering] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [isCheckingAlerts, setIsCheckingAlerts] = useState(false);
+  const [currentDevice] = useState(detectDeviceName());
+  const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>('default');
+  const [hasActiveSub, setHasActiveSub] = useState(false);
+  const [alertConfig, setAlertConfig] = useState<AlertScheduleConfig>(
+    settings.alertSchedule || {
+      aviso7Dias: true,
+      aviso3Dias: true,
+      aviso1Dia: true,
+      avisoNoDia: true,
+      avisoAposVencimento: true,
+      avisoApos40Dias: true,
+      intervaloAtrasoDias: 2,
+      horarioEnvio: '09:00',
+      pushEnabled: true
+    }
+  );
+
+  const loadDevices = async () => {
+    const list = await fetchConnectedDevices();
+    setDevices(list);
+    if (typeof window !== 'undefined' && 'Notification' in window) {
+      setPermission(Notification.permission);
+    } else {
+      setPermission('unsupported');
+    }
+    const currentSub = await getCurrentPushSubscription();
+    setHasActiveSub(!!currentSub);
+  };
+
+  useEffect(() => {
+    loadDevices();
+  }, []);
 
   const handleSaveIdentity = async () => {
     await updateSettings({ appName });
@@ -76,6 +137,62 @@ export const SettingsView: React.FC = () => {
   const handleTestSound = (type: 'beep' | 'sino' | 'urgente' | 'digital') => {
     soundEffects.playByType(type);
     updateSettings({ soundAlert: type });
+  };
+
+  const handleRegisterPush = async () => {
+    setIsRegistering(true);
+    try {
+      const res = await registerDeviceForPush();
+      if (res.success) {
+        playSound('sino');
+        triggerSaved('Dispositivo registrado com sucesso no serviço Push!');
+        await loadDevices();
+      } else {
+        alert(res.message);
+      }
+    } finally {
+      setIsRegistering(false);
+    }
+  };
+
+  const handleSendTestPush = async () => {
+    setIsTesting(true);
+    try {
+      const res = await sendTestPushToAll();
+      if (res.success && res.sentCount > 0) {
+        playSound('urgente');
+        triggerSaved(`Notificação enviada para ${res.sentCount} aparelho(s)!`);
+      } else {
+        alert(res.message);
+      }
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const handleManualAlertScan = async () => {
+    setIsCheckingAlerts(true);
+    try {
+      const res = await triggerManualAlertsDispatch();
+      triggerSaved(res.message);
+      playSound('sino');
+    } finally {
+      setIsCheckingAlerts(false);
+    }
+  };
+
+  const handleDeleteDevice = async (id: string, name: string) => {
+    if (confirm(`Desconectar e remover o aparelho "${name}" das notificações?`)) {
+      await removeDeviceById(id);
+      triggerSaved('Dispositivo desconectado.');
+      await loadDevices();
+    }
+  };
+
+  const handleSaveAlertSchedule = async (newConfig: AlertScheduleConfig) => {
+    setAlertConfig(newConfig);
+    await updateSettings({ alertSchedule: newConfig });
+    triggerSaved('Regras de envio de notificações atualizadas!');
   };
 
   const handleAddServer = async (e: React.FormEvent) => {
@@ -245,6 +362,368 @@ export const SettingsView: React.FC = () => {
               </button>
             );
           })}
+        </div>
+      </div>
+
+      {/* Dispositivos Conectados & Push Android (FCM / Web Push) */}
+      <div className="bg-[#0c0e15] border border-red-950/60 rounded-2xl p-5 md:p-6 space-y-6 relative overflow-hidden shadow-[0_0_30px_rgba(220,38,38,0.12)]">
+        {/* Glow */}
+        <div className="absolute top-0 right-0 w-80 h-80 bg-red-600/10 rounded-full blur-3xl pointer-events-none" />
+
+        {/* Section Header */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#1b1f2e] pb-4">
+          <div className="flex items-center gap-3">
+            <div className="p-3 bg-red-950/80 rounded-2xl border border-red-700/60 text-red-500 shadow-[0_0_15px_rgba(220,38,38,0.4)]">
+              <Smartphone size={22} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="font-display text-base font-bold text-white tracking-wide">
+                  Dispositivos Conectados & Push Android
+                </h2>
+                <span className="px-2 py-0.5 rounded-full bg-red-600/20 border border-red-600/40 text-red-400 font-mono-code text-[11px] font-bold">
+                  FCM / Web Push
+                </span>
+              </div>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Receba alertas nativos na central de notificações do Android mesmo com o app fechado ou tela bloqueada.
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={loadDevices}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#141724] border border-[#23293c] hover:border-gray-500 text-xs text-gray-300 hover:text-white transition-all self-start sm:self-auto"
+            title="Atualizar lista de dispositivos"
+          >
+            <RefreshCw size={13} />
+            <span>Atualizar</span>
+          </button>
+        </div>
+
+        {/* Diagnostic Status Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+          {/* Card 1: Permissão Android */}
+          <div className="bg-[#10131d] border border-[#1f2436] rounded-xl p-3.5 space-y-1">
+            <span className="text-[11px] text-gray-400 font-medium uppercase tracking-wider block">
+              Permissão no Android
+            </span>
+            <div className="flex items-center gap-2">
+              {permission === 'granted' ? (
+                <>
+                  <CheckCircle2 size={16} className="text-emerald-400" />
+                  <span className="text-xs font-bold text-emerald-400">Autorizada</span>
+                </>
+              ) : permission === 'denied' ? (
+                <>
+                  <AlertTriangle size={16} className="text-red-400" />
+                  <span className="text-xs font-bold text-red-400">Bloqueada no Celular</span>
+                </>
+              ) : (
+                <>
+                  <Clock size={16} className="text-amber-400" />
+                  <span className="text-xs font-bold text-amber-400">Pendente de Autorização</span>
+                </>
+              )}
+            </div>
+          </div>
+
+          {/* Card 2: Aparelho Atual */}
+          <div className="bg-[#10131d] border border-[#1f2436] rounded-xl p-3.5 space-y-1">
+            <span className="text-[11px] text-gray-400 font-medium uppercase tracking-wider block">
+              Aparelho Atual
+            </span>
+            <div className="flex items-center gap-2">
+              <Smartphone size={16} className="text-red-400 shrink-0" />
+              <span className="text-xs font-bold text-white truncate" title={currentDevice.name}>
+                {currentDevice.name}
+              </span>
+            </div>
+          </div>
+
+          {/* Card 3: Status Push em 2º Plano */}
+          <div className="bg-[#10131d] border border-[#1f2436] rounded-xl p-3.5 space-y-1">
+            <span className="text-[11px] text-gray-400 font-medium uppercase tracking-wider block">
+              Push em 2º Plano (App Fechado)
+            </span>
+            <div className="flex items-center gap-2">
+              {hasActiveSub ? (
+                <>
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_8px_#10b981] animate-pulse" />
+                  <span className="text-xs font-bold text-emerald-400">Conectado & Ativo</span>
+                </>
+              ) : (
+                <>
+                  <span className="w-2.5 h-2.5 rounded-full bg-gray-500" />
+                  <span className="text-xs font-bold text-gray-400">Não Registrado</span>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="flex flex-wrap items-center gap-3 pt-1">
+          <button
+            onClick={handleRegisterPush}
+            disabled={isRegistering}
+            className="flex items-center gap-2 px-5 py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-bold tracking-wide transition-all shadow-[0_0_15px_#dc2626] disabled:opacity-50 cursor-pointer"
+          >
+            {isRegistering ? (
+              <RefreshCw size={15} className="animate-spin" />
+            ) : (
+              <Zap size={15} />
+            )}
+            <span>{hasActiveSub ? 'Re-sincronizar Notificações deste Aparelho' : 'Ativar Notificações no Celular'}</span>
+          </button>
+
+          <button
+            onClick={handleSendTestPush}
+            disabled={isTesting}
+            className="flex items-center gap-2 px-4 py-3 rounded-xl bg-[#141724] border border-red-900/60 hover:border-red-600 text-red-300 hover:text-white text-xs font-bold tracking-wide transition-all shadow-sm disabled:opacity-50 cursor-pointer"
+          >
+            {isTesting ? (
+              <RefreshCw size={15} className="animate-spin text-red-400" />
+            ) : (
+              <Send size={15} className="text-red-400" />
+            )}
+            <span>Enviar Notificação de Teste no Android</span>
+          </button>
+
+          <button
+            onClick={handleManualAlertScan}
+            disabled={isCheckingAlerts}
+            className="flex items-center gap-2 px-4 py-3 rounded-xl bg-[#121522] border border-[#23293c] hover:border-gray-500 text-gray-300 hover:text-white text-xs font-semibold tracking-wide transition-all disabled:opacity-50 cursor-pointer"
+            title="Executa a verificação dos vencimentos e envia push imediatamente caso haja pendência"
+          >
+            {isCheckingAlerts ? (
+              <RefreshCw size={14} className="animate-spin text-gray-400" />
+            ) : (
+              <CheckCircle2 size={14} className="text-gray-400" />
+            )}
+            <span>Verificar e Disparar Vencimentos Agora</span>
+          </button>
+        </div>
+
+        {/* Connected Devices List */}
+        <div className="space-y-3 pt-2">
+          <div className="flex items-center justify-between">
+            <h3 className="text-xs font-bold text-gray-300 uppercase tracking-wider flex items-center gap-2">
+              <span>Dispositivos Conectados</span>
+              <span className="px-2 py-0.5 rounded-full bg-[#161a29] text-gray-400 font-mono-code text-[11px]">
+                {devices.length} {devices.length === 1 ? 'aparelho' : 'aparelhos'}
+              </span>
+            </h3>
+            <span className="text-[11px] text-gray-500">
+              Notificações são enviadas para todos os aparelhos ativos simultaneamente
+            </span>
+          </div>
+
+          {devices.length === 0 ? (
+            <div className="bg-[#10131d] border border-dashed border-[#23293c] rounded-2xl p-6 text-center space-y-2">
+              <Smartphone size={24} className="mx-auto text-gray-600" />
+              <p className="text-xs text-gray-400 font-semibold">
+                Nenhum dispositivo registrado ainda no serviço de notificações.
+              </p>
+              <p className="text-[11px] text-gray-500 max-w-md mx-auto">
+                Acesse o Gerenciapró pelo navegador do seu celular Android (ou instale o PWA) e clique no botão <strong>"Ativar Notificações no Celular"</strong> acima.
+              </p>
+            </div>
+          ) : (
+            <div className="divide-y divide-[#181c2b] border border-[#1d2233] bg-[#0e111a] rounded-2xl overflow-hidden">
+              {devices.map(device => {
+                const isCurrent = device.deviceName === currentDevice.name;
+                return (
+                  <div key={device.id} className="p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 hover:bg-[#121624] transition-colors">
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 rounded-xl bg-red-950/60 border border-red-900/40 text-red-400">
+                        <Smartphone size={18} />
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-xs text-white">
+                            {device.deviceName}
+                          </span>
+                          {isCurrent && (
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-950/80 border border-emerald-800 text-emerald-300 text-[10px] font-bold">
+                              Este Aparelho
+                            </span>
+                          )}
+                          <span className="px-2 py-0.5 rounded-md bg-[#161a29] text-gray-400 text-[10px] font-mono-code">
+                            {device.platform}
+                          </span>
+                        </div>
+                        <div className="text-[11px] text-gray-500 flex items-center gap-2 mt-0.5">
+                          <span>Conectado em: {new Date(device.createdAt).toLocaleDateString('pt-BR')}</span>
+                          <span>•</span>
+                          <span>Última atividade: {new Date(device.lastActiveAt).toLocaleDateString('pt-BR')} {new Date(device.lastActiveAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3 self-end sm:self-auto">
+                      <span className="flex items-center gap-1.5 text-[11px] text-emerald-400 font-semibold px-2.5 py-1 rounded-lg bg-emerald-950/40 border border-emerald-900/50">
+                        <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+                        <span>Ativo</span>
+                      </span>
+
+                      <button
+                        onClick={() => handleDeleteDevice(device.id, device.deviceName)}
+                        className="p-2 text-gray-500 hover:text-red-400 hover:bg-red-950/40 rounded-xl transition-all"
+                        title="Desconectar este aparelho"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Alert Categories & Automation Schedule */}
+        <div className="bg-[#10131d] border border-[#1f2436] rounded-2xl p-5 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-[#1b1f30] pb-3">
+            <div>
+              <h3 className="font-display text-xs font-bold text-white uppercase tracking-wider">
+                Regras & Categorias de Envio Automático
+              </h3>
+              <p className="text-[11px] text-gray-400">
+                O servidor verifica a base de clientes periodicamente e dispara notificações push no horário programado.
+              </p>
+            </div>
+
+            {/* General Push Toggle */}
+            <label className="flex items-center gap-2 cursor-pointer self-start sm:self-auto">
+              <input
+                type="checkbox"
+                checked={alertConfig.pushEnabled}
+                onChange={e => handleSaveAlertSchedule({ ...alertConfig, pushEnabled: e.target.checked })}
+                className="w-4 h-4 rounded text-red-600 focus:ring-red-500 bg-[#161a28] border-[#293046]"
+              />
+              <span className="text-xs font-bold text-white">Serviço Push Ativo</span>
+            </label>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+            {[
+              {
+                id: 'aviso7Dias',
+                label: '7 dias antes do vencimento',
+                desc: 'Aviso preventivo para renovações tranquilas'
+              },
+              {
+                id: 'aviso3Dias',
+                label: '3 dias antes do vencimento',
+                desc: 'Alerta de vencimento iminente'
+              },
+              {
+                id: 'aviso1Dia',
+                label: '1 dia antes (vence amanhã)',
+                desc: 'Lembrete de urgência prévia'
+              },
+              {
+                id: 'avisoNoDia',
+                label: 'No dia do vencimento (HOJE)',
+                desc: 'Notificação crítica do dia'
+              },
+              {
+                id: 'avisoAposVencimento',
+                label: 'Avisos após vencimento (em atraso)',
+                desc: 'Cobrança periódica de clientes com atraso'
+              },
+              {
+                id: 'avisoApos40Dias',
+                label: 'Clientes inativos (+40 dias atrasados)',
+                desc: 'Alerta para arquivamento ou oferta de reativação'
+              }
+            ].map(rule => (
+              <label
+                key={rule.id}
+                className="flex items-start gap-3 p-3 rounded-xl bg-[#141826] border border-[#23293c] hover:border-red-900/60 cursor-pointer transition-all"
+              >
+                <input
+                  type="checkbox"
+                  checked={(alertConfig as any)[rule.id] ?? true}
+                  onChange={e =>
+                    handleSaveAlertSchedule({
+                      ...alertConfig,
+                      [rule.id]: e.target.checked
+                    })
+                  }
+                  className="mt-0.5 w-4 h-4 rounded text-red-600 focus:ring-red-500 bg-[#0d0f17] border-[#293046]"
+                />
+                <div className="space-y-0.5">
+                  <span className="text-xs font-bold text-gray-200 block">{rule.label}</span>
+                  <span className="text-[11px] text-gray-500 block leading-tight">{rule.desc}</span>
+                </div>
+              </label>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-[#1b1f30]">
+            <div>
+              <label className="block text-xs font-semibold text-gray-300 mb-1.5">
+                Intervalo de cobrança para clientes em atraso
+              </label>
+              <select
+                value={alertConfig.intervaloAtrasoDias || 2}
+                onChange={e =>
+                  handleSaveAlertSchedule({
+                    ...alertConfig,
+                    intervaloAtrasoDias: Number(e.target.value)
+                  })
+                }
+                className="w-full bg-[#121522] border border-[#23293c] focus:border-red-600 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
+              >
+                <option value={1}>A cada 1 dia (Diariamente)</option>
+                <option value={2}>A cada 2 dias (Recomendado)</option>
+                <option value={3}>A cada 3 dias</option>
+                <option value={5}>A cada 5 dias</option>
+                <option value={7}>A cada 7 dias (Semanalmente)</option>
+              </select>
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-gray-300 mb-1.5">
+                Horário preferencial de disparo
+              </label>
+              <input
+                type="time"
+                value={alertConfig.horarioEnvio || '09:00'}
+                onChange={e =>
+                  handleSaveAlertSchedule({
+                    ...alertConfig,
+                    horarioEnvio: e.target.value
+                  })
+                }
+                className="w-full bg-[#121522] border border-[#23293c] focus:border-red-600 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none font-mono-code"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Android Troubleshooting & Step-by-Step Guide */}
+        <div className="bg-[#120f18] border border-amber-900/40 rounded-2xl p-4 sm:p-5 flex items-start gap-3.5">
+          <HelpCircle size={20} className="text-amber-400 shrink-0 mt-0.5" />
+          <div className="space-y-1.5 text-xs text-gray-300 leading-relaxed">
+            <h4 className="font-bold text-amber-300">
+              Como garantir que as notificações cheguem com o celular bloqueado ou app fechado:
+            </h4>
+            <ol className="list-decimal pl-4 space-y-1 text-gray-400 text-[11px]">
+              <li>
+                <strong>Permissão no Android:</strong> Toque no ícone de cadeado na barra de endereço do navegador no celular &gt; <em>Permissões</em> &gt; <em>Notificações</em> &gt; selecione <strong>Permitir</strong>.
+              </li>
+              <li>
+                <strong>Instalar no Android (PWA):</strong> No menu do Chrome (três pontinhos), toque em <strong>"Instalar aplicativo"</strong> ou <strong>"Adicionar à tela inicial"</strong> para melhor integração ao sistema.
+              </li>
+              <li>
+                <strong>Economia de Bateria:</strong> No Android, vá em <em>Configurações do Celular &gt; Apps &gt; Chrome (ou Gerenciapró) &gt; Bateria</em> e defina como <strong>Sem restrições</strong>.
+              </li>
+            </ol>
+          </div>
         </div>
       </div>
 

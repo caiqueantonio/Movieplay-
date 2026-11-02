@@ -16,10 +16,12 @@
       "appPago": false,
       "validadeApp": "-",
       "plano": "Mensal",
-      "vencimento": "06/06/2026",
-      "status": "Em atraso",
+      "vencimento": "25/12/2026",
+      "status": "Em dia",
       "valor": 79.99,
-      "observacoes": "Desde a data 06/04/2026 o servidor está parado, caso ela volte a usar, estarei ativando novamente, por mais 3 meses."
+      "observacoes": "Desde a data 06/04/2026 o servidor está parado, caso ela volte a usar, estarei ativando novamente, por mais 3 meses.",
+      "arquivado": false,
+      "updatedAt": "2026-11-02T10:55:01.752Z"
     },
     {
       "id": "cli-02",
@@ -689,6 +691,38 @@
   ],
   "payments": [
     {
+      "id": "pay-1793616901752afpg",
+      "clienteId": "cli-01",
+      "clienteNome": "Élyda Guedes",
+      "planoNome": "Mensal",
+      "valorOriginal": 79.99,
+      "desconto": 0,
+      "valorFinal": 79.99,
+      "dataCriacao": "2026-11-02",
+      "dataVencimento": "25/12/2026",
+      "formaPagamento": "pix",
+      "status": "pago",
+      "dataConfirmacao": "2026-11-02",
+      "transacaoId": "REN-1793616901752",
+      "observacoes": "Renovação coletiva (+1 mês)"
+    },
+    {
+      "id": "pay-1793616898624",
+      "clienteId": "cli-01",
+      "clienteNome": "Élyda Guedes",
+      "planoNome": "Mensal",
+      "valorOriginal": 20,
+      "desconto": 0,
+      "valorFinal": 20,
+      "dataCriacao": "2026-11-02",
+      "dataVencimento": "25/11/2026",
+      "formaPagamento": "pix",
+      "status": "pago",
+      "dataConfirmacao": "2026-11-02",
+      "transacaoId": "REN-1793616898624",
+      "observacoes": "Renovação registrada no painel"
+    },
+    {
       "id": "pay-01",
       "clienteId": "cli-09",
       "clienteNome": "Beto vaqueiro",
@@ -799,6 +833,20 @@
     "provider": "google"
   },
   "auditLogs": [
+    {
+      "id": "aud-1793616901752",
+      "timestamp": "2026-11-02T10:55:01.752Z",
+      "usuario": "Caique Antonio",
+      "acao": "Renovação Coletiva",
+      "detalhes": "Renovou 1 clientes em lote (+1 mês)"
+    },
+    {
+      "id": "aud-1793616898624",
+      "timestamp": "2026-11-02T10:54:58.624Z",
+      "usuario": "Caique Antonio",
+      "acao": "Renovação de Plano",
+      "detalhes": "Renovou cliente Élyda Guedes até 25/11/2026"
+    },
     {
       "id": "aud-1793242696419",
       "timestamp": "2026-10-29T02:58:16.419Z",

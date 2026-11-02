@@ -35,6 +35,7 @@ import { useApp } from '../context/AppContext';
 import { processClientAvatar, pasteImageFromClipboard } from '../utils/imageHelper';
 import { downloadClientAlarmCalendarFile } from '../utils/notifications';
 import { getClientBirthdayInfo } from '../utils/birthdays';
+import { calculateOneMonthRenewal } from '../utils/dateUtils';
 
 interface ClientModalProps {
   isOpen: boolean;
@@ -228,26 +229,38 @@ export const ClientModal: React.FC<ClientModalProps> = ({
     }
   };
 
+  const [isRenewing, setIsRenewing] = useState(false);
+
+  // Renovação inteligente de 1 clique: +1 mês a partir da data de vencimento e status Em dia
+  const handleIntelligentRenew = async () => {
+    if (!client) return;
+    setIsRenewing(true);
+    try {
+      const nextDue = calculateOneMonthRenewal(formData.vencimento || client.vencimento, 1);
+      await renewClientPlan(client.id, nextDue, Number(formData.valor || client.valor), formData.plano, 'pix');
+      setFormData(prev => ({
+        ...prev,
+        vencimento: nextDue,
+        status: 'Em dia',
+        arquivado: false
+      }));
+      setLocalFeedback(`Plano renovado até ${nextDue}! Status: Em dia`);
+      setTimeout(() => setLocalFeedback(null), 3000);
+    } catch (err) {
+      console.error('Erro ao renovar cliente:', err);
+    } finally {
+      setIsRenewing(false);
+    }
+  };
+
   const handleExecuteRenew = async () => {
     if (!client) return;
-    let curDate = new Date();
-    if (client.vencimento) {
-      if (client.vencimento.includes('/')) {
-        const [d, m, y] = client.vencimento.split('/');
-        curDate = new Date(Number(y), Number(m) - 1, Number(d));
-      } else {
-        curDate = new Date(client.vencimento);
-      }
-    }
-    curDate.setMonth(curDate.getMonth() + Number(renewMonths));
-    const day = String(curDate.getDate()).padStart(2, '0');
-    const month = String(curDate.getMonth() + 1).padStart(2, '0');
-    const year = curDate.getFullYear();
-    const newVenc = `${day}/${month}/${year}`;
-
+    const newVenc = calculateOneMonthRenewal(formData.vencimento || client.vencimento, Number(renewMonths));
     await renewClientPlan(client.id, newVenc, Number(renewValue), formData.plano, 'pix');
-    setFormData(prev => ({ ...prev, vencimento: newVenc, status: 'Em dia' }));
+    setFormData(prev => ({ ...prev, vencimento: newVenc, status: 'Em dia', arquivado: false }));
     setShowRenewBox(false);
+    setLocalFeedback(`Plano renovado até ${newVenc}! Status: Em dia`);
+    setTimeout(() => setLocalFeedback(null), 3000);
   };
 
   return (
@@ -310,6 +323,18 @@ export const ClientModal: React.FC<ClientModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2">
+            {client && (
+              <button
+                type="button"
+                onClick={handleIntelligentRenew}
+                disabled={isRenewing}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-[0_0_12px_rgba(16,185,129,0.4)] transition-all disabled:opacity-50 active:scale-95 border border-emerald-400/50"
+                title={`Renovar intelligentemente: +1 mês a partir de ${formData.vencimento} e ativar status`}
+              >
+                <RotateCcw size={13} className={isRenewing ? 'animate-spin' : ''} />
+                <span>{isRenewing ? 'Renovando...' : 'Renovar'}</span>
+              </button>
+            )}
             {mode === 'view' ? (
               <button
                 type="button"
@@ -1161,16 +1186,30 @@ export const ClientModal: React.FC<ClientModalProps> = ({
                 </button>
               </div>
 
-              {/* Cobrar via WhatsApp */}
-              <button
-                type="button"
-                onClick={() => sendWhatsAppReminder(client)}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-[0_0_12px_rgba(16,185,129,0.3)] transition-all ml-auto"
-                title="Abrir WhatsApp com mensagem de cobrança personalizada"
-              >
-                <Send size={13} />
-                <span>Cobrar no WhatsApp</span>
-              </button>
+              <div className="flex items-center gap-2 ml-auto">
+                {/* Botão Inteligente Renovar */}
+                <button
+                  type="button"
+                  onClick={handleIntelligentRenew}
+                  disabled={isRenewing}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-400 text-white text-xs font-bold shadow-[0_0_15px_rgba(16,185,129,0.4)] transition-all disabled:opacity-50 border border-emerald-400/50 active:scale-95 cursor-pointer"
+                  title={`Renovar intelligentemente: +1 mês a partir de ${formData.vencimento} e ativar status`}
+                >
+                  <RotateCcw size={13} className={isRenewing ? 'animate-spin' : ''} />
+                  <span>{isRenewing ? 'Renovando...' : 'Renovar'}</span>
+                </button>
+
+                {/* Cobrar via WhatsApp */}
+                <button
+                  type="button"
+                  onClick={() => sendWhatsAppReminder(client)}
+                  className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-[0_0_12px_rgba(16,185,129,0.3)] transition-all"
+                  title="Abrir WhatsApp com mensagem de cobrança personalizada"
+                >
+                  <Send size={13} />
+                  <span>Cobrar no WhatsApp</span>
+                </button>
+              </div>
             </div>
           )}
 

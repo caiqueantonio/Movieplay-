@@ -25,8 +25,11 @@ import {
   UserAccount,
   NotificationLog,
   PaymentMethodItem,
-  MessageTemplate
+  MessageTemplate,
+  PushDeviceSubscription,
+  SentAlertRecord
 } from './src/types/index.ts';
+import webpush from 'web-push';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -47,6 +50,12 @@ interface DatabaseSchema {
   settings: AppSettings;
   user: UserAccount;
   auditLogs: Array<{ id: string; timestamp: string; usuario: string; acao: string; detalhes: string }>;
+  pushSubscriptions?: PushDeviceSubscription[];
+  sentAlertHistory?: SentAlertRecord[];
+  vapidKeys?: {
+    publicKey: string;
+    privateKey: string;
+  };
 }
 
 // Ensure data folder and db file exist
@@ -78,6 +87,12 @@ function loadDatabase(): DatabaseSchema {
             corTema: s.corTema || match?.corTema || '#ef4444'
           };
         });
+      }
+      if (!parsed.pushSubscriptions) {
+        parsed.pushSubscriptions = [];
+      }
+      if (!parsed.sentAlertHistory) {
+        parsed.sentAlertHistory = [];
       }
       return parsed;
     } catch (err) {
@@ -164,6 +179,229 @@ async function startServer() {
   app.use(express.urlencoded({ extended: true, limit: '50mb' }));
 
   let db = loadDatabase();
+
+  // Initialize Persistent VAPID Keys for Web Push / FCM
+  if (!db.vapidKeys || !db.vapidKeys.publicKey || !db.vapidKeys.privateKey) {
+    const generatedKeys = webpush.generateVAPIDKeys();
+    db.vapidKeys = generatedKeys;
+    saveDatabase(db);
+    console.log('🔑 Novas chaves VAPID geradas e salvas com sucesso em db.json');
+  }
+
+  try {
+    webpush.setVapidDetails(
+      'mailto:contato@gerenciapro.com.br',
+      db.vapidKeys.publicKey,
+      db.vapidKeys.privateKey
+    );
+  } catch (err) {
+    console.error('Falha ao configurar VAPID details:', err);
+  }
+
+  // Date parsing helper supporting DD/MM/YYYY and YYYY-MM-DD
+  const parseServerDate = (dateStr: string): Date | null => {
+    if (!dateStr) return null;
+    if (dateStr.includes('/')) {
+      const parts = dateStr.split('/');
+      if (parts.length === 3) {
+        const day = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1;
+        const year = parseInt(parts[2], 10);
+        return new Date(year, month, day);
+      }
+    } else if (dateStr.includes('-')) {
+      const parts = dateStr.split('-');
+      if (parts.length === 3) {
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1;
+        const day = parseInt(parts[2], 10);
+        return new Date(year, month, day);
+      }
+    }
+    const d = new Date(dateStr);
+    return isNaN(d.getTime()) ? null : d;
+  };
+
+  const getDaysDiff = (targetDateStr: string, refDate = new Date()): number => {
+    const d = parseServerDate(targetDateStr);
+    if (!d) return 0;
+    const targetMidnight = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+    const refMidnight = new Date(refDate.getFullYear(), refDate.getMonth(), refDate.getDate()).getTime();
+    const diffMs = refMidnight - targetMidnight;
+    return Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  };
+
+  // Dispatch Web Push to all registered and active devices
+  const sendWebPushToDevices = async (
+    payload: {
+      title: string;
+      body: string;
+      icon?: string;
+      badge?: string;
+      data?: any;
+      tag?: string;
+    }
+  ): Promise<number> => {
+    if (!db.pushSubscriptions || db.pushSubscriptions.length === 0) {
+      return 0;
+    }
+
+    const payloadString = JSON.stringify({
+      title: payload.title,
+      body: payload.body,
+      icon: payload.icon || '/logo.svg',
+      badge: payload.badge || '/logo.svg',
+      data: payload.data || { url: '/' },
+      tag: payload.tag || `push-${Date.now()}`
+    });
+
+    let sentCount = 0;
+    const expiredEndpoints: string[] = [];
+
+    for (const sub of db.pushSubscriptions) {
+      if (!sub.ativo) continue;
+      try {
+        await webpush.sendNotification(
+          {
+            endpoint: sub.endpoint,
+            keys: sub.keys
+          },
+          payloadString
+        );
+        sentCount++;
+        sub.lastActiveAt = new Date().toISOString();
+      } catch (err: any) {
+        if (err.statusCode === 404 || err.statusCode === 410) {
+          expiredEndpoints.push(sub.endpoint);
+        } else {
+          console.warn(`[WebPush] Erro ao enviar para ${sub.deviceName}:`, err.message);
+        }
+      }
+    }
+
+    if (expiredEndpoints.length > 0) {
+      db.pushSubscriptions = db.pushSubscriptions.filter(s => !expiredEndpoints.includes(s.endpoint));
+      saveDatabase(db);
+    }
+
+    return sentCount;
+  };
+
+  // Automated Due Dates Dispatcher with Deduplication
+  const dispatchDueAlerts = async (): Promise<number> => {
+    if (!db.settings?.alertSchedule?.pushEnabled) {
+      return 0;
+    }
+
+    const schedule = db.settings.alertSchedule;
+    const todayStr = new Date().toISOString().split('T')[0];
+    if (!db.sentAlertHistory) db.sentAlertHistory = [];
+
+    let dispatched = 0;
+
+    for (const client of db.clients) {
+      if (client.arquivado) continue;
+      if (!client.vencimento) continue;
+
+      const daysDiff = getDaysDiff(client.vencimento);
+      let alertType: string | null = null;
+      let title = '';
+      let body = '';
+
+      if (daysDiff === -7 && schedule.aviso7Dias) {
+        alertType = 'vencendo_7d';
+        title = `📅 Vence em 7 dias: ${client.nome}`;
+        body = `Plano ${client.plano} de ${client.nome} vence em 7 dias (${client.vencimento}). Valor: R$ ${Number(client.valor).toFixed(2)}`;
+      } else if (daysDiff === -3 && schedule.aviso3Dias) {
+        alertType = 'vencendo_3d';
+        title = `⏳ Vence em 3 dias: ${client.nome}`;
+        body = `Atenção: Vencimento de ${client.nome} em 3 dias (${client.vencimento}).`;
+      } else if (daysDiff === -1 && schedule.aviso1Dia) {
+        alertType = 'vencendo_1d';
+        title = `⚡ Vence Amanhã: ${client.nome}`;
+        body = `O plano de ${client.nome} vence amanhã (${client.vencimento}). Lembrete preventivo!`;
+      } else if (daysDiff === 0 && schedule.avisoNoDia) {
+        alertType = 'vencendo_hoje';
+        title = `🚨 VENCE HOJE: ${client.nome}`;
+        body = `O plano de ${client.nome} vence hoje! Valor: R$ ${Number(client.valor).toFixed(2)}.`;
+      } else if (daysDiff > 0 && client.status !== 'Em dia' && schedule.avisoAposVencimento) {
+        if (daysDiff >= 40 && schedule.avisoApos40Dias) {
+          alertType = 'atrasado_40d';
+          title = `⛔ Cliente Inativo (+40d): ${client.nome}`;
+          body = `${client.nome} está há ${daysDiff} dias sem renovar (${client.vencimento}).`;
+        } else {
+          const interval = Math.max(1, schedule.intervaloAtrasoDias || 2);
+          if (daysDiff === 1 || daysDiff === 3 || daysDiff % interval === 0) {
+            alertType = 'atrasado';
+            title = `⚠️ Pagamento em Atraso (${daysDiff}d): ${client.nome}`;
+            body = `Vencimento de ${client.nome} atrasado há ${daysDiff} dias. Cobrança pendente: R$ ${Number(client.valor).toFixed(2)}`;
+          }
+        }
+      }
+
+      if (!alertType) continue;
+
+      // Deduplication: Has this alertType already been sent to this client TODAY?
+      const alreadySentToday = db.sentAlertHistory.some(
+        h => h.clientId === client.id && h.tipo === alertType && h.dataEnvio === todayStr
+      );
+
+      if (alreadySentToday) {
+        continue;
+      }
+
+      // Send Push to devices
+      await sendWebPushToDevices({
+        title,
+        body,
+        icon: '/logo.svg',
+        badge: '/logo.svg',
+        tag: `client-${client.id}-${alertType}`,
+        data: {
+          clientId: client.id,
+          url: `/?clientId=${client.id}#client-${client.id}`
+        }
+      });
+
+      // Record in history
+      db.sentAlertHistory.unshift({
+        id: 'alert-' + Date.now() + Math.random().toString(36).substring(2, 6),
+        clientId: client.id,
+        clienteNome: client.nome,
+        tipo: alertType,
+        dataEnvio: todayStr,
+        timestamp: new Date().toISOString(),
+        mensagem: body
+      });
+
+      // Log in notification logs
+      db.notificationLogs.unshift({
+        id: 'notif-' + Date.now(),
+        data: new Date().toISOString(),
+        clienteId: client.id,
+        clienteNome: client.nome,
+        clienteWhatsapp: client.whatsapp || client.celular || '',
+        tipo: `Push Android: ${alertType}`,
+        status: 'enviado',
+        mensagem: body
+      });
+
+      dispatched++;
+    }
+
+    if (db.sentAlertHistory.length > 1000) {
+      db.sentAlertHistory = db.sentAlertHistory.slice(0, 1000);
+    }
+    if (db.notificationLogs.length > 500) {
+      db.notificationLogs = db.notificationLogs.slice(0, 500);
+    }
+
+    if (dispatched > 0) {
+      saveDatabase(db);
+    }
+
+    return dispatched;
+  };
 
   // Helper log audit
   const logAudit = (usuario: string, acao: string, detalhes: string) => {
@@ -278,6 +516,7 @@ async function startServer() {
 
     client.vencimento = novoVencimento;
     client.status = 'Em dia';
+    client.arquivado = false;
     client.updatedAt = new Date().toISOString();
 
     const payment: PaymentRecord = {
@@ -301,6 +540,50 @@ async function startServer() {
     logAudit(db.user.nome, 'Renovação de Plano', `Renovou cliente ${client.nome} até ${novoVencimento}`);
     saveDatabase(db);
     res.json({ success: true, client, payment });
+  });
+
+  // Bulk Renew
+  app.post('/api/clients/bulk-renew', (req: Request, res: Response) => {
+    const { renewals } = req.body;
+    if (!Array.isArray(renewals) || renewals.length === 0) {
+      res.status(400).json({ error: 'Nenhuma renovação informada' });
+      return;
+    }
+    const updatedClients: Client[] = [];
+    const newPayments: PaymentRecord[] = [];
+
+    renewals.forEach(({ clientId, novoVencimento }: { clientId: string; novoVencimento: string }) => {
+      const client = db.clients.find(c => c.id === clientId);
+      if (!client) return;
+      client.vencimento = novoVencimento;
+      client.status = 'Em dia';
+      client.arquivado = false;
+      client.updatedAt = new Date().toISOString();
+      updatedClients.push(client);
+
+      const payment: PaymentRecord = {
+        id: 'pay-' + Date.now() + Math.random().toString(36).substring(2, 6),
+        clienteId: client.id,
+        clienteNome: client.nome,
+        planoNome: client.plano,
+        valorOriginal: client.valor,
+        desconto: 0,
+        valorFinal: client.valor,
+        dataCriacao: new Date().toISOString().split('T')[0],
+        dataVencimento: novoVencimento,
+        formaPagamento: 'pix',
+        status: 'pago',
+        dataConfirmacao: new Date().toISOString().split('T')[0],
+        transacaoId: 'REN-' + Date.now(),
+        observacoes: 'Renovação coletiva (+1 mês)'
+      };
+      newPayments.unshift(payment);
+      db.payments.unshift(payment);
+    });
+
+    logAudit(db.user.nome, 'Renovação Coletiva', `Renovou ${updatedClients.length} clientes em lote (+1 mês)`);
+    saveDatabase(db);
+    res.json({ success: true, updatedClients, payments: newPayments });
   });
 
   // Import batch
@@ -843,6 +1126,116 @@ async function startServer() {
     }
   });
 
+  // --- NATIVE ANDROID PUSH NOTIFICATIONS API ---
+
+  // Get VAPID Public Key for client subscription
+  app.get('/api/push/vapid-public-key', (_req: Request, res: Response) => {
+    res.json({ publicKey: db.vapidKeys?.publicKey || '' });
+  });
+
+  // List connected devices
+  app.get('/api/push/devices', (_req: Request, res: Response) => {
+    res.json({ devices: db.pushSubscriptions || [] });
+  });
+
+  // Register device push subscription
+  app.post('/api/push/register', (req: Request, res: Response) => {
+    const { endpoint, keys, deviceName, platform, userAgent } = req.body;
+    if (!endpoint || !keys || !keys.p256dh || !keys.auth) {
+      res.status(400).json({ error: 'Endpoint e chaves de criptografia são obrigatórios.' });
+      return;
+    }
+
+    if (!db.pushSubscriptions) db.pushSubscriptions = [];
+    const nowIso = new Date().toISOString();
+    const existingIndex = db.pushSubscriptions.findIndex(s => s.endpoint === endpoint);
+
+    let device: PushDeviceSubscription;
+    if (existingIndex !== -1) {
+      device = {
+        ...db.pushSubscriptions[existingIndex],
+        deviceName: deviceName || db.pushSubscriptions[existingIndex].deviceName,
+        platform: platform || db.pushSubscriptions[existingIndex].platform,
+        userAgent: userAgent || db.pushSubscriptions[existingIndex].userAgent,
+        keys,
+        lastActiveAt: nowIso,
+        ativo: true
+      };
+      db.pushSubscriptions[existingIndex] = device;
+    } else {
+      device = {
+        id: 'dev-' + Date.now() + Math.random().toString(36).substring(2, 6),
+        endpoint,
+        keys,
+        deviceName: deviceName || 'Celular Android',
+        platform: platform || 'Android Chrome',
+        userAgent: userAgent || '',
+        userId: db.user?.id || 'admin',
+        createdAt: nowIso,
+        lastActiveAt: nowIso,
+        ativo: true
+      };
+      db.pushSubscriptions.unshift(device);
+    }
+
+    saveDatabase(db);
+    logAudit(db.user.nome, 'Dispositivo Conectado', `Aparelho registrado para Push: ${device.deviceName}`);
+    res.json({ success: true, device });
+  });
+
+  // Unregister device push subscription
+  app.post('/api/push/unregister', (req: Request, res: Response) => {
+    const { endpoint } = req.body;
+    if (db.pushSubscriptions) {
+      db.pushSubscriptions = db.pushSubscriptions.filter(s => s.endpoint !== endpoint);
+      saveDatabase(db);
+    }
+    res.json({ success: true });
+  });
+
+  // Delete device by ID
+  app.delete('/api/push/devices/:id', (req: Request, res: Response) => {
+    const { id } = req.params;
+    if (db.pushSubscriptions) {
+      const dev = db.pushSubscriptions.find(d => d.id === id);
+      db.pushSubscriptions = db.pushSubscriptions.filter(d => d.id !== id);
+      saveDatabase(db);
+      if (dev) {
+        logAudit(db.user.nome, 'Dispositivo Removido', `Removeu o aparelho: ${dev.deviceName}`);
+      }
+    }
+    res.json({ success: true });
+  });
+
+  // Send real test notification to all active devices
+  app.post('/api/push/test', async (_req: Request, res: Response) => {
+    const sentCount = await sendWebPushToDevices({
+      title: '🚨 Gerenciapró — Teste no Android',
+      body: 'Notificação push em segundo plano funcionando com perfeição no seu celular Android!',
+      icon: '/logo.svg',
+      badge: '/logo.svg',
+      data: { url: '/' }
+    });
+
+    res.json({
+      success: true,
+      sentCount,
+      message: sentCount > 0
+        ? `Notificação enviada com sucesso para ${sentCount} dispositivo(s) conectado(s)!`
+        : 'Nenhum dispositivo Android ativo cadastrado. Clique em "Ativar Notificações no Celular" para vincular este aparelho.'
+    });
+  });
+
+  // Trigger manual check and dispatch
+  app.post('/api/push/dispatch-alerts', async (_req: Request, res: Response) => {
+    const count = await dispatchDueAlerts();
+    res.json({
+      success: true,
+      dispatchedCount: count,
+      message: `Varredura concluída. ${count} novo(s) alerta(s) enviado(s).`
+    });
+  });
+
   // Mount Vite dev server in middleware mode
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
@@ -863,6 +1256,15 @@ async function startServer() {
 
   app.listen(PORT, '0.0.0.0', () => {
     console.log(`🚀 Gerenciapró Server running on http://localhost:${PORT}`);
+    // Run initial alert check shortly after start
+    setTimeout(() => {
+      dispatchDueAlerts().catch(err => console.error('Initial alerts check error', err));
+    }, 4000);
+
+    // Periodic check every 15 minutes
+    setInterval(() => {
+      dispatchDueAlerts().catch(err => console.error('Periodic alerts check error', err));
+    }, 1000 * 60 * 15);
   });
 }
 

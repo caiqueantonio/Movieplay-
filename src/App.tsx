@@ -15,6 +15,7 @@ import { ClientModal } from './components/ClientModal';
 import { ProfileModal } from './components/ProfileModal';
 import { LoginView } from './components/LoginView';
 import { MobileNotificationsModal } from './components/MobileNotificationsModal';
+import { NotificationCenterModal } from './components/NotificationCenterModal';
 import { Client, UserAccount } from './types';
 
 function MainApp() {
@@ -44,9 +45,44 @@ function MainApp() {
   const [clientModalMode, setClientModalMode] = useState<'view' | 'edit' | 'create'>('view');
   const [isClientModalOpen, setIsClientModalOpen] = useState(false);
 
-  // Profile Modal & Mobile Notifications Modal
+  // Profile, Notification Center & Mobile Notifications Modals
   const [isProfileModalOpen, setIsProfileModalOpen] = useState(false);
   const [isMobileNotifModalOpen, setIsMobileNotifModalOpen] = useState(false);
+  const [isNotifCenterOpen, setIsNotifCenterOpen] = useState(false);
+
+  // Deep-link from Android Push Notification (?clientId=... or #client-...)
+  useEffect(() => {
+    const handleUrlTarget = () => {
+      const url = new URL(window.location.href);
+      const qClientId = url.searchParams.get('clientId');
+      const hash = window.location.hash;
+      const hashClientId = hash.startsWith('#client-') ? hash.replace('#client-', '') : null;
+      const targetId = qClientId || hashClientId;
+      if (targetId) {
+        setActiveClientIdToOpen(targetId);
+      }
+    };
+
+    handleUrlTarget();
+    window.addEventListener('hashchange', handleUrlTarget);
+
+    const handleSwMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'NOTIFICATION_CLICKED' && event.data.data?.clientId) {
+        setActiveClientIdToOpen(event.data.data.clientId);
+      }
+    };
+
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.addEventListener('message', handleSwMessage);
+    }
+
+    return () => {
+      window.removeEventListener('hashchange', handleUrlTarget);
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+      }
+    };
+  }, [setActiveClientIdToOpen]);
 
   // Auto-open client modal if deep-linked or routed via activeClientIdToOpen
   useEffect(() => {
@@ -127,6 +163,7 @@ function MainApp() {
           onToggleMobileMenu={() => setMobileMenuOpen(!mobileMenuOpen)}
           onOpenProfile={() => setIsProfileModalOpen(true)}
           onOpenMobileNotifs={() => setIsMobileNotifModalOpen(true)}
+          onOpenNotifCenter={() => setIsNotifCenterOpen(true)}
         />
 
         {/* Content View */}
@@ -177,6 +214,13 @@ function MainApp() {
         isOpen={isProfileModalOpen}
         onClose={() => setIsProfileModalOpen(false)}
         onLogout={handleLogout}
+      />
+
+      {/* Central de Notificações Modal */}
+      <NotificationCenterModal
+        isOpen={isNotifCenterOpen}
+        onClose={() => setIsNotifCenterOpen(false)}
+        onOpenMobileGuide={() => setIsMobileNotifModalOpen(true)}
       />
 
       {/* Phone Integration Notifications Modal */}

@@ -177,12 +177,39 @@ export interface BillingConfig {
   mensagemCobrancaTemplate: string;
 }
 
+export interface PushDeviceSubscription {
+  id: string;
+  endpoint: string;
+  keys: {
+    p256dh: string;
+    auth: string;
+  };
+  deviceName: string;
+  userAgent: string;
+  platform: string;
+  userId?: string;
+  createdAt: string;
+  lastActiveAt: string;
+  ativo: boolean;
+}
+
+export interface SentAlertRecord {
+  id: string;
+  clientId: string;
+  clienteNome: string;
+  tipo: string;
+  dataEnvio: string; // YYYY-MM-DD
+  timestamp: string;
+  mensagem: string;
+}
+
 export interface AlertScheduleConfig {
   aviso7Dias: boolean;
   aviso3Dias: boolean;
   aviso1Dia: boolean;
   avisoNoDia: boolean;
   avisoAposVencimento: boolean;
+  avisoApos40Dias?: boolean;
   intervaloAtrasoDias: number; // ex: a cada 2 dias durante atraso
   horarioEnvio: string;        // ex: '09:00'
   pushEnabled: boolean;

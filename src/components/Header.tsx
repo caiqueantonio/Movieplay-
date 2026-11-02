@@ -21,9 +21,15 @@ interface HeaderProps {
   onToggleMobileMenu: () => void;
   onOpenProfile: () => void;
   onOpenMobileNotifs?: () => void;
+  onOpenNotifCenter?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu, onOpenProfile, onOpenMobileNotifs }) => {
+export const Header: React.FC<HeaderProps> = ({
+  onToggleMobileMenu,
+  onOpenProfile,
+  onOpenMobileNotifs,
+  onOpenNotifCenter
+}) => {
   const {
     searchQuery,
     setSearchQuery,
@@ -142,14 +148,18 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu, onOpenProfil
           <button
             onClick={() => {
               playSound('beep');
-              setShowNotifDropdown(!showNotifDropdown);
+              if (onOpenNotifCenter) {
+                onOpenNotifCenter();
+              } else {
+                setShowNotifDropdown(!showNotifDropdown);
+              }
             }}
-            className="relative p-2.5 rounded-xl bg-[#0d0f17] border border-[#1d2130] text-gray-400 hover:text-gray-200 hover:border-[#2d334a] transition-all"
-            title="Central de notificações"
+            className="relative p-2.5 rounded-xl bg-[#0d0f17] border border-[#1d2130] text-gray-400 hover:text-gray-200 hover:border-red-600/60 transition-all cursor-pointer"
+            title="Abrir Central de Notificações"
           >
             <Bell size={17} />
             {unreadCount > 0 && (
-              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center shadow-[0_0_8px_#dc2626]">
+              <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-600 text-white text-[10px] font-bold flex items-center justify-center shadow-[0_0_8px_#dc2626] animate-pulse">
                 {unreadCount}
               </span>
             )}
@@ -205,6 +215,7 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu, onOpenProfil
               </div>
             </div>
           )}
+        </div>
           {/* Mobile Notifications Phone Alert Trigger */}
           {onOpenMobileNotifs && (
             <button
@@ -256,7 +267,6 @@ export const Header: React.FC<HeaderProps> = ({ onToggleMobileMenu, onOpenProfil
             <Shield size={13} className="text-red-500 hidden sm:inline" />
           </button>
         </div>
-      </div>
     </header>
   );
 };

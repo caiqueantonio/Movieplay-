@@ -43,6 +43,7 @@ import { INITIAL_CLIENTS } from '../data/initialData';
 import { processClientAvatar } from '../utils/imageHelper';
 import { downloadClientAlarmCalendarFile, getDaysDiffFromReference } from '../utils/notifications';
 import { getClientBirthdayInfo } from '../utils/birthdays';
+import { calculateOneMonthRenewal } from '../utils/dateUtils';
 
 interface ClientsViewProps {
   onNewClient: () => void;
@@ -70,6 +71,8 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
     unarchiveClient,
     archiveExpiredClients,
     bulkArchiveClients,
+    smartRenewClient,
+    bulkRenewClients,
     importClientsBatch,
     sendWhatsAppReminder,
     copyClientField,
@@ -192,6 +195,34 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
   const togglePasswordVisibility = (id: string) => {
     setRevealedPasswords(prev => ({ ...prev, [id]: !prev[id] }));
     playSound('beep');
+  };
+
+  const [renewingClientId, setRenewingClientId] = useState<string | null>(null);
+  const [isBulkRenewing, setIsBulkRenewing] = useState<boolean>(false);
+
+  // Renovação Inteligente: +1 mês a partir do vencimento expirado e status alterado para Em dia
+  const handleSmartRenew = async (client: Client) => {
+    setRenewingClientId(client.id);
+    try {
+      await smartRenewClient(client.id);
+    } catch (err) {
+      console.error('Erro ao renovar cliente:', err);
+    } finally {
+      setRenewingClientId(null);
+    }
+  };
+
+  const handleBulkRenew = async () => {
+    if (selectedIds.length === 0) return;
+    setIsBulkRenewing(true);
+    try {
+      await bulkRenewClients(selectedIds);
+      setSelectedIds([]);
+    } catch (err) {
+      console.error('Erro na renovação coletiva:', err);
+    } finally {
+      setIsBulkRenewing(false);
+    }
   };
 
   const handleDeleteOne = async (client: Client) => {
@@ -579,6 +610,17 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
           </div>
 
           <div className="flex items-center flex-wrap gap-2">
+            {/* Renovação Coletiva Inteligente */}
+            <button
+              onClick={handleBulkRenew}
+              disabled={isBulkRenewing}
+              className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-400 text-white border border-emerald-400/50 text-xs font-bold transition-all shadow-[0_0_15px_rgba(16,185,129,0.4)] hover:scale-[1.02] disabled:opacity-50"
+              title="Renovar intelligentemente todos os clientes selecionados (+1 mês a partir do vencimento) e alterar status para Em dia"
+            >
+              <RotateCcw size={13} className={isBulkRenewing ? 'animate-spin' : ''} />
+              <span>{isBulkRenewing ? 'Renovando...' : `Renovar (${selectedIds.length})`}</span>
+            </button>
+
             {clientFolder === 'ativos' ? (
               <button
                 onClick={handleBulkArchive}
@@ -911,7 +953,22 @@ export const ClientsView: React.FC<ClientsViewProps> = ({
 
                       {/* 6. Ações */}
                       <td className="py-3 px-3 align-middle text-right">
-                        <div className="flex items-center justify-end gap-1">
+                        <div className="flex items-center justify-end gap-1.5 flex-nowrap">
+                          {/* Botão Inteligente Renovar */}
+                          <button
+                            onClick={() => handleSmartRenew(client)}
+                            disabled={renewingClientId === client.id}
+                            className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold transition-all shadow-md active:scale-95 shrink-0 border cursor-pointer ${
+                              client.status === 'Em atraso' || isOverdue
+                                ? 'bg-gradient-to-r from-emerald-600 via-teal-600 to-emerald-500 hover:from-emerald-500 hover:to-teal-400 text-white border-emerald-400/70 shadow-[0_0_12px_rgba(16,185,129,0.5)] animate-pulse'
+                                : 'bg-emerald-950/80 hover:bg-emerald-900 text-emerald-300 hover:text-white border-emerald-800/70 shadow-[0_0_8px_rgba(16,185,129,0.2)]'
+                            } disabled:opacity-50 disabled:cursor-wait`}
+                            title={`Renovar intelligentemente: +1 mês a partir de ${client.vencimento} (${calculateOneMonthRenewal(client.vencimento)}) e alterar status de expirado para ativo (Em dia)`}
+                          >
+                            <RotateCcw size={12} className={renewingClientId === client.id ? 'animate-spin' : ''} />
+                            <span>{renewingClientId === client.id ? 'Renovando...' : 'Renovar'}</span>
+                          </button>
+
                           {/* Copiar Ficha Completa */}
                           <button
                             onClick={() => copyClientFullCredentials(client)}

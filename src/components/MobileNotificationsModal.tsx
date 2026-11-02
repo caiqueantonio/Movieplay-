@@ -22,6 +22,11 @@ import {
   requestNotificationPermission,
   sendBrowserNotification
 } from '../utils/notifications';
+import {
+  registerDeviceForPush,
+  sendTestPushToAll,
+  getCurrentPushSubscription
+} from '../utils/webPush';
 
 interface MobileNotificationsModalProps {
   isOpen: boolean;
@@ -36,10 +41,12 @@ export const MobileNotificationsModal: React.FC<MobileNotificationsModalProps> =
   const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>('default');
   const [testSent, setTestSent] = useState(false);
   const [isRequesting, setIsRequesting] = useState(false);
+  const [hasWebPushSub, setHasWebPushSub] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
       setPermission(getNotificationPermission());
+      getCurrentPushSubscription().then(sub => setHasWebPushSub(!!sub));
     }
   }, [isOpen]);
 
@@ -50,35 +57,45 @@ export const MobileNotificationsModal: React.FC<MobileNotificationsModalProps> =
 
   const handleRequestPermission = async () => {
     setIsRequesting(true);
-    const granted = await requestNotificationPermission();
-    setPermission(getNotificationPermission());
-    setIsRequesting(false);
-
-    if (granted) {
-      playSound('sino');
-      // Fire a test notification immediately
-      sendBrowserNotification('🚨 Gerenciapró Alerta Ativado!', {
-        body: `Notificações configuradas com sucesso! Você tem ${overdueCount} cliente(s) em atraso no painel.`,
-        icon: '/logo.png'
-      });
-      setTestSent(true);
-    } else {
-      alert('A permissão de notificações não foi concedida. Verifique as permissões de notificação do seu navegador nas configurações do celular.');
+    try {
+      const res = await registerDeviceForPush();
+      setPermission(getNotificationPermission());
+      if (res.success) {
+        playSound('sino');
+        setHasWebPushSub(true);
+        setTestSent(true);
+        setTimeout(() => setTestSent(false), 4500);
+      } else {
+        alert(res.message);
+      }
+    } finally {
+      setIsRequesting(false);
     }
   };
 
-  const handleSendTestNotification = () => {
+  const handleSendTestNotification = async () => {
     playSound('urgente');
-    const success = sendBrowserNotification('🚨 Gerenciapró: Clientes em Atraso!', {
-      body: `Atenção: Existem ${overdueCount} clientes com pagamentos em atraso aguardando cobrança no painel.`,
-      icon: '/logo.png'
-    });
-
-    if (success) {
-      setTestSent(true);
-      setTimeout(() => setTestSent(false), 4000);
-    } else {
-      alert('Ative as notificações primeiro clicando no botão acima.');
+    setIsRequesting(true);
+    try {
+      const res = await sendTestPushToAll();
+      if (res.success && res.sentCount > 0) {
+        setTestSent(true);
+        setTimeout(() => setTestSent(false), 4500);
+      } else {
+        // Fallback local notification
+        const fallback = sendBrowserNotification('🚨 Gerenciapró: Teste de Notificação', {
+          body: `Existem ${overdueCount} clientes com pagamentos em atraso e ${dueSoonCount} vencendo em breve.`,
+          icon: '/logo.svg'
+        });
+        if (fallback) {
+          setTestSent(true);
+          setTimeout(() => setTestSent(false), 4500);
+        } else {
+          alert('Ative as notificações primeiro clicando no botão acima.');
+        }
+      }
+    } finally {
+      setIsRequesting(false);
     }
   };
 
