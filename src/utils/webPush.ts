@@ -85,11 +85,69 @@ export async function getCurrentPushSubscription(): Promise<PushSubscription | n
   }
 }
 
-export async function registerDeviceForPush(): Promise<{ success: boolean; message: string; subscription?: PushDeviceSubscription }> {
+export function getNotificationPermission(): NotificationPermission | 'unsupported' {
+  if (typeof window === 'undefined' || !('Notification' in window)) {
+    return 'unsupported';
+  }
+  return Notification.permission;
+}
+
+export function isPermissionDenied(): boolean {
+  return getNotificationPermission() === 'denied';
+}
+
+export function isPermissionGranted(): boolean {
+  return getNotificationPermission() === 'granted';
+}
+
+export function isPermissionDefault(): boolean {
+  return getNotificationPermission() === 'default';
+}
+
+export function listenToPermissionChanges(onChange: (status: NotificationPermission) => void): () => void {
+  if (typeof navigator === 'undefined' || !('permissions' in navigator)) {
+    return () => {};
+  }
+  let isCleanedUp = false;
+  let statusObj: PermissionStatus | null = null;
+
+  try {
+    (navigator.permissions as any).query({ name: 'notifications' }).then((status: PermissionStatus) => {
+      if (isCleanedUp) return;
+      statusObj = status;
+      const handler = () => {
+        onChange(Notification.permission);
+      };
+      status.addEventListener('change', handler);
+    }).catch(() => {
+      // ignore unsupported query
+    });
+  } catch {
+    // ignore
+  }
+
+  return () => {
+    isCleanedUp = true;
+    if (statusObj) {
+      statusObj.onchange = null;
+    }
+  };
+}
+
+export async function registerDeviceForPush(): Promise<{ success: boolean; message: string; isDenied?: boolean; subscription?: PushDeviceSubscription }> {
   if (!isPushNotificationSupported()) {
     return {
       success: false,
       message: 'Seu navegador ou dispositivo não possui suporte nativo à API Web Push / PushManager.'
+    };
+  }
+
+  // Pre-check if Android has blocked notifications
+  if (Notification.permission === 'denied') {
+    return {
+      success: false,
+      isDenied: true,
+      message: 'As notificações estão bloqueadas no seu navegador/Android. Você precisa alterar a permissão para "Permitir" nas configurações do site.'
     };
   }
 
@@ -99,7 +157,10 @@ export async function registerDeviceForPush(): Promise<{ success: boolean; messa
     if (permission !== 'granted') {
       return {
         success: false,
-        message: 'A permissão de notificações foi negada no Android. Para receber alertas com o app fechado, autorize as notificações nas Configurações do seu Android.'
+        isDenied: permission === 'denied',
+        message: permission === 'denied'
+          ? 'A permissão foi negada no Android. Toque no ícone do cadeado ou configurações do site no Chrome para desbloquear.'
+          : 'A permissão de notificações não foi concedida.'
       };
     }
 
@@ -128,11 +189,26 @@ export async function registerDeviceForPush(): Promise<{ success: boolean; messa
     const applicationServerKey = urlBase64ToUint8Array(vapidKey);
     let sub = await registration.pushManager.getSubscription();
 
-    if (!sub) {
+    if (sub) {
+      // Check if existing subscription is valid or key changed
+      try {
+        await sub.unsubscribe();
+      } catch (unsubErr) {
+        console.warn('Could not cleanly unsubscribe old sub', unsubErr);
+      }
+      sub = null;
+    }
+
+    try {
       sub = await registration.pushManager.subscribe({
         userVisibleOnly: true,
         applicationServerKey: applicationServerKey as unknown as BufferSource
       });
+    } catch (subErr: any) {
+      return {
+        success: false,
+        message: `Erro ao ativar canal push: ${subErr.message || subErr}`
+      };
     }
 
     const subJson = sub.toJSON();

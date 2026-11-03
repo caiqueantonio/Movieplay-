@@ -416,7 +416,144 @@ async function startServer() {
     if (db.auditLogs.length > 500) db.auditLogs.pop();
   };
 
+  // --- REAL-TIME MULTI-DEVICE SYNCHRONIZATION (SSE) ---
+  interface ConnectedSyncClient {
+    id: string;
+    res: Response;
+    deviceId: string;
+    deviceName: string;
+    ip: string;
+    connectedAt: string;
+  }
+
+  const activeSyncClients = new Map<string, ConnectedSyncClient>();
+
+  const broadcastSync = (
+    req: Request | null,
+    action: string,
+    entity: 'client' | 'payment' | 'setting' | 'server' | 'plan' | 'template' | 'all',
+    actionText: string,
+    data?: any
+  ) => {
+    let rawDeviceId = '';
+    let rawDeviceName = '';
+    if (req) {
+      rawDeviceId = (req.headers['x-device-id'] as string) || (req.query?.deviceId as string) || '';
+      rawDeviceName = (req.headers['x-device-name'] as string) || (req.query?.deviceName as string) || '';
+    }
+    const originDeviceId = rawDeviceId || 'servidor';
+    let originDeviceName = 'Dispositivo';
+    try {
+      originDeviceName = rawDeviceName ? decodeURIComponent(rawDeviceName) : (db.user?.nome || 'Outro Dispositivo');
+    } catch {
+      originDeviceName = rawDeviceName || 'Outro Dispositivo';
+    }
+
+    const payload = JSON.stringify({
+      type: 'SYNC_UPDATE',
+      originDeviceId,
+      originDeviceName,
+      action,
+      entity,
+      actionText,
+      timestamp: new Date().toISOString(),
+      data
+    });
+
+    const sseMessage = `event: sync\ndata: ${payload}\n\n`;
+
+    activeSyncClients.forEach((client, clientId) => {
+      try {
+        client.res.write(sseMessage);
+      } catch {
+        activeSyncClients.delete(clientId);
+      }
+    });
+  };
+
   // --- API ROUTES ---
+
+  // Real-time synchronization SSE stream
+  app.get('/api/sync/events', (req: Request, res: Response) => {
+    const rawDeviceId = (req.query.deviceId as string) || (req.headers['x-device-id'] as string) || `dev-${Date.now()}`;
+    const rawDeviceName = (req.query.deviceName as string) || (req.headers['x-device-name'] as string) || 'Dispositivo Conectado';
+    let deviceName = 'Celular Android';
+    try {
+      deviceName = decodeURIComponent(rawDeviceName);
+    } catch {
+      deviceName = rawDeviceName;
+    }
+    const clientId = `conn-${rawDeviceId}-${Date.now()}`;
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
+    res.flushHeaders();
+
+    const clientInfo: ConnectedSyncClient = {
+      id: clientId,
+      res,
+      deviceId: rawDeviceId,
+      deviceName,
+      ip: req.ip || '',
+      connectedAt: new Date().toISOString()
+    };
+
+    activeSyncClients.set(clientId, clientInfo);
+
+    // Initial greeting
+    res.write(`event: connected\ndata: ${JSON.stringify({
+      type: 'CONNECTED',
+      clientId,
+      deviceId: rawDeviceId,
+      deviceName,
+      activeDevicesCount: activeSyncClients.size
+    })}\n\n`);
+
+    // Broadcast join to other active clients
+    activeSyncClients.forEach((otherClient, id) => {
+      if (id !== clientId) {
+        try {
+          otherClient.res.write(`event: sync\ndata: ${JSON.stringify({
+            type: 'DEVICE_CONNECTED',
+            originDeviceId: rawDeviceId,
+            originDeviceName: deviceName,
+            action: 'DEVICE_JOINED',
+            actionText: `Dispositivo "${deviceName}" conectado ao painel`,
+            entity: 'all',
+            timestamp: new Date().toISOString()
+          })}\n\n`);
+        } catch {}
+      }
+    });
+
+    // Heartbeat ping every 20 seconds
+    const pingInterval = setInterval(() => {
+      try {
+        res.write(`: ping\n\n`);
+      } catch {
+        clearInterval(pingInterval);
+        activeSyncClients.delete(clientId);
+      }
+    }, 20000);
+
+    req.on('close', () => {
+      clearInterval(pingInterval);
+      activeSyncClients.delete(clientId);
+    });
+  });
+
+  // Get active connected devices list
+  app.get('/api/sync/active-devices', (_req: Request, res: Response) => {
+    const list = Array.from(activeSyncClients.values()).map(c => ({
+      clientId: c.id,
+      deviceId: c.deviceId,
+      deviceName: c.deviceName,
+      connectedAt: c.connectedAt
+    }));
+    res.json({ devices: list, total: list.length });
+  });
 
   // Health
   app.get('/api/health', (_req: Request, res: Response) => {
@@ -456,6 +593,7 @@ async function startServer() {
     db.clients.unshift(newClient);
     logAudit(db.user.nome, 'Novo Cliente', `Cadastrou o cliente: ${newClient.nome}`);
     saveDatabase(db);
+    broadcastSync(req, 'client_created', 'client', `Cliente "${newClient.nome}" cadastrado`, newClient);
     res.status(201).json(newClient);
   });
 
@@ -476,6 +614,7 @@ async function startServer() {
     db.clients[index] = updated;
     logAudit(db.user.nome, 'Edição de Cliente', `Atualizou dados do cliente: ${updated.nome}`);
     saveDatabase(db);
+    broadcastSync(req, 'client_updated', 'client', `Cliente "${updated.nome}" atualizado`, updated);
     res.json(updated);
   });
 
@@ -489,6 +628,7 @@ async function startServer() {
     db.clients = db.clients.filter(c => c.id !== id);
     logAudit(db.user.nome, 'Exclusão de Cliente', `Removeu o cliente: ${client.nome}`);
     saveDatabase(db);
+    broadcastSync(req, 'client_deleted', 'client', `Cliente "${client.nome}" excluído`, { id });
     res.json({ success: true, id });
   });
 
@@ -502,6 +642,7 @@ async function startServer() {
     db.clients = db.clients.filter(c => !ids.includes(c.id));
     logAudit(db.user.nome, 'Exclusão em Massa', `Excluiu ${count} cliente(s)`);
     saveDatabase(db);
+    broadcastSync(req, 'clients_bulk_deleted', 'client', `${count} cliente(s) excluído(s)`, { ids });
     res.json({ success: true, count });
   });
 
@@ -539,6 +680,7 @@ async function startServer() {
     db.payments.unshift(payment);
     logAudit(db.user.nome, 'Renovação de Plano', `Renovou cliente ${client.nome} até ${novoVencimento}`);
     saveDatabase(db);
+    broadcastSync(req, 'client_renewed', 'client', `Cliente ${client.nome} renovado até ${novoVencimento}`, { client, payment });
     res.json({ success: true, client, payment });
   });
 
@@ -583,6 +725,7 @@ async function startServer() {
 
     logAudit(db.user.nome, 'Renovação Coletiva', `Renovou ${updatedClients.length} clientes em lote (+1 mês)`);
     saveDatabase(db);
+    broadcastSync(req, 'clients_bulk_renewed', 'client', `${updatedClients.length} clientes renovados em lote (+1 mês)`, { updatedClients, payments: newPayments });
     res.json({ success: true, updatedClients, payments: newPayments });
   });
 
@@ -631,6 +774,7 @@ async function startServer() {
 
     logAudit(db.user.nome, 'Importação de Clientes', `Importou ${importedClients.length} registro(s) no modo ${mode}`);
     saveDatabase(db);
+    broadcastSync(req, 'clients_imported', 'client', `Importação de ${importedClients.length} cliente(s) concluída`, { count: db.clients.length });
     res.json({ success: true, total: db.clients.length });
   });
 
@@ -651,6 +795,7 @@ async function startServer() {
     db.servers.push(newServer);
     logAudit(db.user.nome, 'Novo Servidor', `Adicionou servidor ${newServer.nome}`);
     saveDatabase(db);
+    broadcastSync(req, 'server_created', 'server', `Servidor "${newServer.nome}" cadastrado`, newServer);
     res.status(201).json(newServer);
   });
 
@@ -665,6 +810,7 @@ async function startServer() {
       };
       logAudit(db.user.nome, 'Servidor Atualizado', `Atualizou servidor: ${db.servers[index].nome}`);
       saveDatabase(db);
+      broadcastSync(req, 'server_updated', 'server', `Servidor "${db.servers[index].nome}" atualizado`, db.servers[index]);
       res.json(db.servers[index]);
     } else {
       res.status(404).json({ error: 'Servidor não encontrado' });
@@ -673,9 +819,11 @@ async function startServer() {
 
   app.delete('/api/servers/:id', (req: Request, res: Response) => {
     const { id } = req.params;
+    const srv = db.servers.find(s => s.id === id);
     db.servers = db.servers.filter(s => s.id !== id);
     logAudit(db.user.nome, 'Remoção de Servidor', `Removeu servidor id ${id}`);
     saveDatabase(db);
+    broadcastSync(req, 'server_deleted', 'server', `Servidor "${srv ? srv.nome : id}" excluído`, { id });
     res.json({ success: true });
   });
 
@@ -699,6 +847,7 @@ async function startServer() {
     db.serverDeposits.unshift(deposit);
     logAudit(db.user.nome, 'Depósito em Servidor', `Registrou investimento de R$ ${deposit.valor} no servidor ${deposit.servidorNome}`);
     saveDatabase(db);
+    broadcastSync(req, 'server_deposit_created', 'server', `Investimento de R$ ${deposit.valor} no servidor ${deposit.servidorNome}`, deposit);
     res.status(201).json(deposit);
   });
 
@@ -708,6 +857,7 @@ async function startServer() {
     db.serverDeposits = db.serverDeposits.filter(d => d.id !== id);
     logAudit(db.user.nome, 'Exclusão de Depósito', `Removeu registro de investimento id ${id}`);
     saveDatabase(db);
+    broadcastSync(req, 'server_deposit_deleted', 'server', `Investimento de servidor removido`, { id });
     res.json({ success: true });
   });
 
@@ -730,6 +880,7 @@ async function startServer() {
     db.plans.push(newPlan);
     logAudit(db.user.nome, 'Novo Plano', `Cadastrou plano ${newPlan.nome}`);
     saveDatabase(db);
+    broadcastSync(req, 'plan_created', 'plan', `Plano "${newPlan.nome}" criado`, newPlan);
     res.status(201).json(newPlan);
   });
 
@@ -739,6 +890,7 @@ async function startServer() {
     if (index !== -1) {
       db.plans[index] = { ...db.plans[index], ...req.body, id };
       saveDatabase(db);
+      broadcastSync(req, 'plan_updated', 'plan', `Plano "${db.plans[index].nome}" atualizado`, db.plans[index]);
       res.json(db.plans[index]);
     } else {
       res.status(404).json({ error: 'Plano não encontrado' });
@@ -747,8 +899,10 @@ async function startServer() {
 
   app.delete('/api/plans/:id', (req: Request, res: Response) => {
     const { id } = req.params;
+    const plan = db.plans.find(p => p.id === id);
     db.plans = db.plans.filter(p => p.id !== id);
     saveDatabase(db);
+    broadcastSync(req, 'plan_deleted', 'plan', `Plano "${plan ? plan.nome : id}" excluído`, { id });
     res.json({ success: true });
   });
 
@@ -767,6 +921,7 @@ async function startServer() {
     db.payments.unshift(payment);
     logAudit(db.user.nome, 'Nova Cobrança', `Cobrança criada para ${payment.clienteNome} no valor de R$ ${payment.valorFinal}`);
     saveDatabase(db);
+    broadcastSync(req, 'payment_created', 'payment', `Cobrança para ${payment.clienteNome} (R$ ${payment.valorFinal}) gerada`, payment);
     res.status(201).json(payment);
   });
 
@@ -789,6 +944,7 @@ async function startServer() {
 
     logAudit(db.user.nome, 'Confirmação de Pagamento', `Pagamento confirmado: ${payment.clienteNome} (R$ ${payment.valorFinal})`);
     saveDatabase(db);
+    broadcastSync(req, 'payment_confirmed', 'payment', `Pagamento confirmado: ${payment.clienteNome} (R$ ${payment.valorFinal})`, { payment, client });
     res.json({ success: true, payment, client });
   });
 
@@ -816,6 +972,7 @@ async function startServer() {
     db.paymentMethods.push(newMethod);
     logAudit(db.user.nome, 'Forma de Pagamento Cadastrada', `Cadastrou forma: ${newMethod.nome}`);
     saveDatabase(db);
+    broadcastSync(req, 'payment_method_created', 'setting', `Forma de pagamento "${newMethod.nome}" cadastrada`, newMethod);
     res.status(201).json(newMethod);
   });
 
@@ -830,6 +987,7 @@ async function startServer() {
       db.paymentMethods[index] = { ...db.paymentMethods[index], ...req.body, id };
       logAudit(db.user.nome, 'Forma de Pagamento Atualizada', `Atualizou forma: ${db.paymentMethods[index].nome}`);
       saveDatabase(db);
+      broadcastSync(req, 'payment_method_updated', 'setting', `Forma de pagamento "${db.paymentMethods[index].nome}" atualizada`, db.paymentMethods[index]);
       res.json(db.paymentMethods[index]);
     } else {
       res.status(404).json({ error: 'Forma de pagamento não encontrada' });
@@ -839,9 +997,11 @@ async function startServer() {
   app.delete('/api/payment-methods/:id', (req: Request, res: Response) => {
     const { id } = req.params;
     if (!db.paymentMethods) db.paymentMethods = [...INITIAL_PAYMENT_METHODS];
+    const method = db.paymentMethods.find(m => m.id === id);
     db.paymentMethods = db.paymentMethods.filter(m => m.id !== id);
     logAudit(db.user.nome, 'Forma de Pagamento Removida', `Excluiu forma id ${id}`);
     saveDatabase(db);
+    broadcastSync(req, 'payment_method_deleted', 'setting', `Forma de pagamento "${method ? method.nome : id}" removida`, { id });
     res.json({ success: true });
   });
 
@@ -867,6 +1027,7 @@ async function startServer() {
     db.messageTemplates.push(newTemplate);
     logAudit(db.user.nome, 'Novo Modelo de Mensagem', `Criou modelo: ${newTemplate.nome}`);
     saveDatabase(db);
+    broadcastSync(req, 'template_created', 'template', `Modelo de mensagem "${newTemplate.nome}" criado`, newTemplate);
     res.status(201).json(newTemplate);
   });
 
@@ -883,6 +1044,7 @@ async function startServer() {
       };
       logAudit(db.user.nome, 'Modelo de Mensagem Editado', `Editou modelo: ${db.messageTemplates[index].nome}`);
       saveDatabase(db);
+      broadcastSync(req, 'template_updated', 'template', `Modelo "${db.messageTemplates[index].nome}" atualizado`, db.messageTemplates[index]);
       res.json(db.messageTemplates[index]);
     } else {
       res.status(404).json({ error: 'Modelo não encontrado' });
@@ -892,16 +1054,19 @@ async function startServer() {
   app.delete('/api/message-templates/:id', (req: Request, res: Response) => {
     const { id } = req.params;
     if (!db.messageTemplates) db.messageTemplates = [...INITIAL_MESSAGE_TEMPLATES];
+    const tmpl = db.messageTemplates.find(t => t.id === id);
     db.messageTemplates = db.messageTemplates.filter(t => t.id !== id);
     logAudit(db.user.nome, 'Modelo de Mensagem Excluído', `Excluiu modelo id ${id}`);
     saveDatabase(db);
+    broadcastSync(req, 'template_deleted', 'template', `Modelo "${tmpl ? tmpl.nome : id}" removido`, { id });
     res.json({ success: true });
   });
 
-  app.post('/api/message-templates/restore', (_req: Request, res: Response) => {
+  app.post('/api/message-templates/restore', (req: Request, res: Response) => {
     db.messageTemplates = [...INITIAL_MESSAGE_TEMPLATES];
     logAudit(db.user.nome, 'Restauração de Modelos', 'Restaurou os 7 modelos profissionais padrão de mensagens');
     saveDatabase(db);
+    broadcastSync(req, 'templates_restored', 'template', `Modelos restaurados para os padrões profissionais`, db.messageTemplates);
     res.json({ success: true, templates: db.messageTemplates });
   });
 
@@ -913,6 +1078,7 @@ async function startServer() {
   app.put('/api/automations', (req: Request, res: Response) => {
     db.automations = req.body;
     saveDatabase(db);
+    broadcastSync(req, 'automations_updated', 'setting', `Regras de automação atualizadas`, db.automations);
     res.json(db.automations);
   });
 
@@ -947,6 +1113,7 @@ async function startServer() {
     db.settings = { ...db.settings, ...req.body };
     logAudit(db.user.nome, 'Configurações Alteradas', 'Preferências do aplicativo atualizadas');
     saveDatabase(db);
+    broadcastSync(req, 'settings_updated', 'setting', `Configurações do sistema atualizadas`, db.settings);
     res.json(db.settings);
   });
 
@@ -966,6 +1133,7 @@ async function startServer() {
     };
     logAudit(db.user.nome || db.user.email, 'Usuário Conectado', `Conta ativa: ${db.user.email}`);
     saveDatabase(db);
+    broadcastSync(req, 'user_updated', 'setting', `Perfil atualizado: ${db.user.nome}`, db.user);
     res.json(db.user);
   });
 
@@ -998,6 +1166,7 @@ async function startServer() {
     };
     logAudit(db.user.nome, 'Restauração de Backup', `Backup restaurado com ${db.clients.length} clientes`);
     saveDatabase(db);
+    broadcastSync(req, 'database_restored', 'all', `Backup do sistema restaurado`, db);
     res.json({ success: true, count: db.clients.length });
   });
 

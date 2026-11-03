@@ -13,7 +13,9 @@ import {
   VolumeX,
   Shield,
   Trash2,
-  Smartphone
+  Smartphone,
+  Wifi,
+  WifiOff
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
@@ -44,7 +46,10 @@ export const Header: React.FC<HeaderProps> = ({
     user,
     settings,
     toggleSound,
-    playSound
+    playSound,
+    connectedDevicesCount,
+    isRealtimeConnected,
+    openAndroidPermissionAssistant
   } = useApp();
 
   const [showNotifDropdown, setShowNotifDropdown] = useState(false);
@@ -216,17 +221,42 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           )}
         </div>
-          {/* Mobile Notifications Phone Alert Trigger */}
-          {onOpenMobileNotifs && (
-            <button
-              onClick={onOpenMobileNotifs}
-              className="p-2.5 rounded-xl bg-[#0d0f17] border border-[#1d2130] hover:border-red-600/60 text-gray-400 hover:text-red-400 transition-all relative group"
-              title="Como o app te notifica no celular (sem abrir o app)"
-            >
-              <Smartphone size={17} />
-              <span className="w-2 h-2 rounded-full bg-emerald-500 absolute top-1.5 right-1.5 animate-pulse" />
-            </button>
+
+        {/* Real-time Multi-Device Sync Indicator */}
+        <div
+          className={`hidden md:flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-[11px] font-semibold transition-all ${
+            isRealtimeConnected
+              ? 'bg-emerald-950/20 border-emerald-500/30 text-emerald-400'
+              : 'bg-amber-950/20 border-amber-500/30 text-amber-400'
+          }`}
+          title={`${connectedDevicesCount} aparelho(s) sincronizado(s) em tempo real nesta conta`}
+        >
+          {isRealtimeConnected ? (
+            <>
+              <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shadow-[0_0_6px_#10b981]" />
+              <span className="hidden xl:inline text-gray-300">Sincronizado:</span>
+              <span className="font-bold text-white">{connectedDevicesCount} disp.</span>
+            </>
+          ) : (
+            <>
+              <WifiOff size={13} className="text-amber-400" />
+              <span>Reconectando...</span>
+            </>
           )}
+        </div>
+
+        {/* Mobile Notifications / Android Permission Unlock Assistant Trigger */}
+        <button
+          onClick={() => {
+            playSound('beep');
+            openAndroidPermissionAssistant();
+          }}
+          className="p-2.5 rounded-xl bg-[#0d0f17] border border-[#1d2130] hover:border-red-600/60 text-gray-400 hover:text-red-400 transition-all relative group cursor-pointer"
+          title="Desbloquear Notificações no Android / Central Push"
+        >
+          <Smartphone size={17} />
+          <span className="w-2 h-2 rounded-full bg-red-500 absolute top-1.5 right-1.5 animate-pulse shadow-[0_0_6px_#ef4444]" />
+        </button>
 
           {/* User Profile with Google Account Badge */}
           <button

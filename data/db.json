@@ -834,6 +834,20 @@
   },
   "auditLogs": [
     {
+      "id": "aud-1793723885792",
+      "timestamp": "2026-11-03T16:38:05.792Z",
+      "usuario": "Caique Antonio",
+      "acao": "Exclusão de Cliente",
+      "detalhes": "Removeu o cliente: Cliente Teste Sincronizacao"
+    },
+    {
+      "id": "aud-1793723873645",
+      "timestamp": "2026-11-03T16:37:53.645Z",
+      "usuario": "Caique Antonio",
+      "acao": "Novo Cliente",
+      "detalhes": "Cadastrou o cliente: Cliente Teste Sincronizacao"
+    },
+    {
       "id": "aud-1793616901752",
       "timestamp": "2026-11-02T10:55:01.752Z",
       "usuario": "Caique Antonio",
@@ -1024,5 +1038,11 @@
       "observacoes": "Créditos semanais Fast play",
       "createdAt": "2026-10-18"
     }
-  ]
+  ],
+  "pushSubscriptions": [],
+  "sentAlertHistory": [],
+  "vapidKeys": {
+    "publicKey": "BFAXvLJYu6Q1bXytz456VYjMRgXHMyz6NAw_XcWvX71J56rKN-matLfDBIUj54Horz0_KVt8krUDEUr7tfhFEa0",
+    "privateKey": "8Y18738wCLz4ktBbSzqu4yx6kRb6eO58_ek3RB7ADhk"
+  }
 }

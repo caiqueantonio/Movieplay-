@@ -55,7 +55,11 @@ export const SettingsView: React.FC = () => {
     deletePlan,
     clients,
     playSound,
-    setActiveTab
+    setActiveTab,
+    openAndroidPermissionAssistant,
+    showToast,
+    connectedDevices: liveConnectedDevices,
+    connectedDevicesCount: liveConnectedDevicesCount
   } = useApp();
 
   const [appName, setAppName] = useState(settings.appName || 'Gerenciapró');
@@ -148,7 +152,10 @@ export const SettingsView: React.FC = () => {
         triggerSaved('Dispositivo registrado com sucesso no serviço Push!');
         await loadDevices();
       } else {
-        alert(res.message);
+        showToast(res.message);
+        if (res.isDenied || Notification?.permission === 'denied') {
+          openAndroidPermissionAssistant();
+        }
       }
     } finally {
       setIsRegistering(false);
@@ -163,7 +170,10 @@ export const SettingsView: React.FC = () => {
         playSound('urgente');
         triggerSaved(`Notificação enviada para ${res.sentCount} aparelho(s)!`);
       } else {
-        alert(res.message);
+        showToast(res.message);
+        if (Notification?.permission === 'denied') {
+          openAndroidPermissionAssistant();
+        }
       }
     } finally {
       setIsTesting(false);
@@ -463,8 +473,43 @@ export const SettingsView: React.FC = () => {
           </div>
         </div>
 
+        {/* Unblock Banner when Android permission was denied */}
+        {permission === 'denied' && (
+          <div className="p-4 rounded-xl bg-red-950/40 border border-red-500/50 flex flex-col sm:flex-row sm:items-center justify-between gap-3 animate-fade-in shadow-lg shadow-red-950/40">
+            <div className="flex items-start gap-3">
+              <AlertTriangle className="w-5 h-5 text-red-400 shrink-0 mt-0.5" />
+              <div>
+                <p className="text-xs font-bold text-white flex items-center gap-2">
+                  Permissão de notificações bloqueada no seu Android / Navegador
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-600/30 text-red-300 border border-red-500/40">
+                    Ação necessária
+                  </span>
+                </p>
+                <p className="text-[11px] text-gray-300 mt-1 leading-relaxed">
+                  O celular não exibirá novos avisos enquanto as notificações estiverem bloqueadas no Chrome. Toque no botão ao lado para ver como desbloquear em 15 segundos.
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={openAndroidPermissionAssistant}
+              className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-bold text-xs shrink-0 cursor-pointer shadow-lg shadow-red-950/50 flex items-center justify-center gap-2 transition-all"
+            >
+              <Smartphone size={14} />
+              <span>Desbloquear Notificações (Guia)</span>
+            </button>
+          </div>
+        )}
+
         {/* Action Buttons */}
         <div className="flex flex-wrap items-center gap-3 pt-1">
+          <button
+            onClick={openAndroidPermissionAssistant}
+            className="flex items-center gap-2 px-4 py-3 rounded-xl bg-[#181220] border border-red-500/40 hover:border-red-500 text-red-300 hover:text-white text-xs font-bold tracking-wide transition-all cursor-pointer shadow-sm"
+          >
+            <Smartphone size={15} className="text-red-400" />
+            <span>Guia Passo a Passo Android</span>
+          </button>
+
           <button
             onClick={handleRegisterPush}
             disabled={isRegistering}

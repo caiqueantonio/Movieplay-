@@ -37,7 +37,7 @@ export const MobileNotificationsModal: React.FC<MobileNotificationsModalProps> =
   isOpen,
   onClose
 }) => {
-  const { clients, playSound } = useApp();
+  const { clients, playSound, openAndroidPermissionAssistant, showToast } = useApp();
   const [permission, setPermission] = useState<NotificationPermission | 'unsupported'>('default');
   const [testSent, setTestSent] = useState(false);
   const [isRequesting, setIsRequesting] = useState(false);
@@ -64,9 +64,14 @@ export const MobileNotificationsModal: React.FC<MobileNotificationsModalProps> =
         playSound('sino');
         setHasWebPushSub(true);
         setTestSent(true);
+        showToast('Notificações ativadas com sucesso no seu dispositivo!');
         setTimeout(() => setTestSent(false), 4500);
       } else {
-        alert(res.message);
+        showToast(res.message);
+        if (res.isDenied || Notification?.permission === 'denied') {
+          onClose();
+          openAndroidPermissionAssistant();
+        }
       }
     } finally {
       setIsRequesting(false);
@@ -80,6 +85,7 @@ export const MobileNotificationsModal: React.FC<MobileNotificationsModalProps> =
       const res = await sendTestPushToAll();
       if (res.success && res.sentCount > 0) {
         setTestSent(true);
+        showToast(`Notificação disparada para ${res.sentCount} aparelho(s)!`);
         setTimeout(() => setTestSent(false), 4500);
       } else {
         // Fallback local notification
@@ -89,9 +95,12 @@ export const MobileNotificationsModal: React.FC<MobileNotificationsModalProps> =
         });
         if (fallback) {
           setTestSent(true);
+          showToast('Notificação local exibida!');
           setTimeout(() => setTestSent(false), 4500);
         } else {
-          alert('Ative as notificações primeiro clicando no botão acima.');
+          showToast('Notificações bloqueadas ou pendentes. Abrindo assistente de desbloqueio...');
+          onClose();
+          openAndroidPermissionAssistant();
         }
       }
     } finally {
@@ -162,11 +171,22 @@ export const MobileNotificationsModal: React.FC<MobileNotificationsModalProps> =
           </div>
 
           <div className="flex items-center gap-2 w-full sm:w-auto">
-            {permission !== 'granted' ? (
+            {permission === 'denied' ? (
+              <button
+                onClick={() => {
+                  onClose();
+                  openAndroidPermissionAssistant();
+                }}
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-500 text-white text-xs font-bold shadow-[0_0_15px_rgba(220,38,38,0.4)] transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+              >
+                <AlertTriangle size={14} />
+                <span>Desbloquear no Android (Guia)</span>
+              </button>
+            ) : permission !== 'granted' ? (
               <button
                 onClick={handleRequestPermission}
                 disabled={isRequesting}
-                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white text-xs font-bold shadow-[0_0_15px_rgba(220,38,38,0.4)] transition-all flex items-center justify-center gap-1.5"
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white text-xs font-bold shadow-[0_0_15px_rgba(220,38,38,0.4)] transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <Bell size={14} />
                 <span>Ativar no Meu Celular</span>
@@ -174,7 +194,7 @@ export const MobileNotificationsModal: React.FC<MobileNotificationsModalProps> =
             ) : (
               <button
                 onClick={handleSendTestNotification}
-                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-[0_0_15px_rgba(16,185,129,0.4)] transition-all flex items-center justify-center gap-1.5"
+                className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-[0_0_15px_rgba(16,185,129,0.4)] transition-all flex items-center justify-center gap-1.5 cursor-pointer"
               >
                 <Sparkles size={14} />
                 <span>Testar Notificação Agora</span>

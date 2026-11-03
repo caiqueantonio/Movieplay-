@@ -34,6 +34,14 @@ import {
 } from '../utils/notifications';
 import { getUpcomingBirthdays } from '../utils/birthdays';
 import { calculateOneMonthRenewal } from '../utils/dateUtils';
+import {
+  getOrCreateDeviceId,
+  getDeviceDisplayName,
+  getSyncHeaders,
+  SyncEventPayload,
+  ActiveConnectedDevice
+} from '../utils/deviceSync';
+import { SyncToastData } from '../components/SyncToast';
 
 interface UndoAction {
   id: string;
@@ -65,6 +73,18 @@ interface AppContextType {
   showToast: (msg: string) => void;
   copyClientField: (fieldName: string, value: string) => void;
   copyClientFullCredentials: (client: Client) => void;
+  
+  // Real-time Multi-Device Sync
+  syncToast: SyncToastData | null;
+  dismissSyncToast: () => void;
+  connectedDevicesCount: number;
+  connectedDevices: ActiveConnectedDevice[];
+  isRealtimeConnected: boolean;
+
+  // Android Permission Assistant
+  androidPermissionModalOpen: boolean;
+  setAndroidPermissionModalOpen: (open: boolean) => void;
+  openAndroidPermissionAssistant: () => void;
   
   // Direct client open
   activeClientIdToOpen: string | null;
@@ -165,6 +185,22 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [activeClientIdToOpen, setActiveClientIdToOpen] = useState<string | null>(null);
+
+  // Real-time device sync states
+  const [syncToast, setSyncToast] = useState<SyncToastData | null>(null);
+  const [connectedDevicesCount, setConnectedDevicesCount] = useState<number>(1);
+  const [connectedDevices, setConnectedDevices] = useState<ActiveConnectedDevice[]>([]);
+  const [isRealtimeConnected, setIsRealtimeConnected] = useState<boolean>(true);
+
+  // Android notification permission modal
+  const [androidPermissionModalOpen, setAndroidPermissionModalOpen] = useState<boolean>(false);
+  const openAndroidPermissionAssistant = useCallback(() => {
+    setAndroidPermissionModalOpen(true);
+  }, []);
+
+  const dismissSyncToast = useCallback(() => {
+    setSyncToast(null);
+  }, []);
 
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
@@ -311,6 +347,193 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, []);
 
+  // Realtime update handler from SSE
+  const applyRealtimeUpdate = useCallback((payload: SyncEventPayload) => {
+    const { action, entity, data } = payload;
+
+    if (entity === 'client') {
+      if (action === 'client_created' && data?.client) {
+        setClients(prev => {
+          if (prev.some(c => c.id === data.client.id)) return prev;
+          return [data.client, ...prev];
+        });
+      } else if ((action === 'client_updated' || action === 'client_renewed') && data?.client) {
+        setClients(prev => prev.map(c => c.id === data.client.id ? { ...c, ...data.client } : c));
+        if (data.payment) {
+          setPayments(prev => [data.payment, ...prev.filter(p => p.id !== data.payment.id)]);
+        }
+      } else if (action === 'client_deleted' && data?.id) {
+        setClients(prev => prev.filter(c => c.id !== data.id));
+      } else if (action === 'clients_bulk_deleted' && Array.isArray(data?.ids)) {
+        setClients(prev => prev.filter(c => !data.ids.includes(c.id)));
+      } else if (action === 'clients_bulk_renewed' && Array.isArray(data?.updatedClients)) {
+        const map = new Map<string, Client>(data.updatedClients.map((c: Client) => [c.id, c]));
+        setClients(prev => prev.map(c => map.get(c.id) || c));
+        if (Array.isArray(data.payments)) {
+          setPayments(prev => [...data.payments, ...prev]);
+        }
+      } else if (action === 'clients_imported') {
+        refreshData();
+      }
+    } else if (entity === 'server') {
+      if (action === 'server_created' && data?.server) {
+        setServers(prev => [...prev.filter(s => s.id !== data.server.id), data.server]);
+      } else if (action === 'server_updated' && data?.server) {
+        setServers(prev => prev.map(s => s.id === data.server.id ? { ...s, ...data.server } : s));
+      } else if (action === 'server_deleted' && data?.id) {
+        setServers(prev => prev.filter(s => s.id !== data.id));
+      } else if (action === 'server_deposit_created' && data?.deposit) {
+        setServerDeposits(prev => [data.deposit, ...prev.filter(d => d.id !== data.deposit.id)]);
+      } else if (action === 'server_deposit_deleted' && data?.id) {
+        setServerDeposits(prev => prev.filter(d => d.id !== data.id));
+      }
+    } else if (entity === 'plan') {
+      if (action === 'plan_created' && data?.plan) {
+        setPlans(prev => [...prev.filter(p => p.id !== data.plan.id), data.plan]);
+      } else if (action === 'plan_updated' && data?.plan) {
+        setPlans(prev => prev.map(p => p.id === data.plan.id ? { ...p, ...data.plan } : p));
+      } else if (action === 'plan_deleted' && data?.id) {
+        setPlans(prev => prev.filter(p => p.id !== data.id));
+      }
+    } else if (entity === 'payment') {
+      if (action === 'payment_created' && data?.payment) {
+        setPayments(prev => [data.payment, ...prev.filter(p => p.id !== data.payment.id)]);
+      } else if (action === 'payment_confirmed') {
+        if (data?.payment) {
+          setPayments(prev => prev.map(p => p.id === data.payment.id ? data.payment : p));
+        }
+        if (data?.client) {
+          setClients(prev => prev.map(c => c.id === data.client.id ? data.client : c));
+        }
+      }
+    } else if (entity === 'payment_method') {
+      if (action === 'payment_method_created' && data?.paymentMethod) {
+        setPaymentMethods(prev => [data.paymentMethod, ...prev.filter(m => m.id !== data.paymentMethod.id)]);
+      } else if (action === 'payment_method_updated' && data?.paymentMethod) {
+        setPaymentMethods(prev => prev.map(m => m.id === data.paymentMethod.id ? data.paymentMethod : m));
+      } else if (action === 'payment_method_deleted' && data?.id) {
+        setPaymentMethods(prev => prev.filter(m => m.id !== data.id));
+      }
+    } else if (entity === 'template') {
+      if (action === 'template_created' && data?.template) {
+        setMessageTemplates(prev => [data.template, ...prev.filter(t => t.id !== data.template.id)]);
+      } else if (action === 'template_updated' && data?.template) {
+        setMessageTemplates(prev => prev.map(t => t.id === data.template.id ? { ...t, ...data.template } : t));
+      } else if (action === 'template_deleted' && data?.id) {
+        setMessageTemplates(prev => prev.filter(t => t.id !== data.id));
+      } else if (action === 'templates_restored' && Array.isArray(data?.templates)) {
+        setMessageTemplates(data.templates);
+      }
+    } else if (entity === 'setting') {
+      if (data?.settings) {
+        setSettings(prev => ({ ...prev, ...data.settings }));
+      }
+    } else if (entity === 'user') {
+      if (data?.user) {
+        setUser(prev => ({ ...prev, ...data.user }));
+      }
+    } else if (entity === 'all') {
+      refreshData();
+    }
+  }, [refreshData]);
+
+  // Establish SSE Connection for instant multi-device synchronization
+  useEffect(() => {
+    let eventSource: EventSource | null = null;
+    let reconnectTimer: any = null;
+    let autoDismissTimer: any = null;
+
+    const myDeviceId = getOrCreateDeviceId();
+    const myDeviceName = getDeviceDisplayName();
+
+    const connectSSE = () => {
+      try {
+        const url = `/api/sync/events?deviceId=${encodeURIComponent(myDeviceId)}&deviceName=${encodeURIComponent(myDeviceName)}`;
+        eventSource = new EventSource(url);
+
+        eventSource.onopen = () => {
+          setIsRealtimeConnected(true);
+        };
+
+        eventSource.onerror = () => {
+          setIsRealtimeConnected(false);
+          eventSource?.close();
+          reconnectTimer = setTimeout(connectSSE, 3500);
+        };
+
+        eventSource.addEventListener('sync', (evt: MessageEvent) => {
+          try {
+            const payload: SyncEventPayload = JSON.parse(evt.data);
+            // Ignore events initiated by this exact device
+            if (payload.originDeviceId && payload.originDeviceId !== myDeviceId) {
+              // 1. Prominent multi-device sync notification
+              setSyncToast({
+                deviceName: payload.originDeviceName || 'Outro dispositivo',
+                actionText: payload.actionText || 'Alteração realizada',
+                timestamp: Date.now()
+              });
+
+              if (autoDismissTimer) clearTimeout(autoDismissTimer);
+              autoDismissTimer = setTimeout(() => {
+                setSyncToast(null);
+              }, 6000);
+
+              // 2. Audible tone & in-app log
+              soundEffects.playByType('digital');
+              setNotifications(prev => [
+                {
+                  id: 'sync-' + Date.now() + '-' + Math.random().toString(36).substring(2, 6),
+                  titulo: `⚡ Sincronizado: ${payload.originDeviceName}`,
+                  mensagem: `Alteração feita no dispositivo [${payload.originDeviceName}]: ${payload.actionText}`,
+                  tipo: 'info',
+                  data: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                  lida: false
+                },
+                ...prev
+              ]);
+
+              // 3. Apply state change directly
+              applyRealtimeUpdate(payload);
+            }
+          } catch (e) {
+            console.error('Falha ao processar payload SSE:', e);
+          }
+        });
+
+        eventSource.addEventListener('connected_devices', (evt: MessageEvent) => {
+          try {
+            const devices: ActiveConnectedDevice[] = JSON.parse(evt.data);
+            setConnectedDevices(devices);
+            setConnectedDevicesCount(Math.max(1, devices.length));
+          } catch (e) {
+            console.error('Falha ao processar connected_devices SSE:', e);
+          }
+        });
+      } catch (err) {
+        console.warn('Erro ao conectar EventSource:', err);
+      }
+    };
+
+    connectSSE();
+
+    // Fetch initial connected devices
+    fetch('/api/sync/active-devices')
+      .then(res => res.json())
+      .then(data => {
+        if (data.devices) {
+          setConnectedDevices(data.devices);
+          setConnectedDevicesCount(Math.max(1, data.devices.length));
+        }
+      })
+      .catch(() => {});
+
+    return () => {
+      if (eventSource) eventSource.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+      if (autoDismissTimer) clearTimeout(autoDismissTimer);
+    };
+  }, [applyRealtimeUpdate]);
+
   useEffect(() => {
     try {
       const savedSession = localStorage.getItem('gerenciapro_session');
@@ -435,7 +658,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch('/api/clients', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify(clientData)
       });
       const newClient = await res.json();
@@ -466,7 +689,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch(`/api/clients/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify(updates)
       });
       if (res.ok) {
@@ -521,7 +744,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       for (const cl of expired) {
         await fetch(`/api/clients/${cl.id}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
           body: JSON.stringify({ arquivado: true })
         });
       }
@@ -540,7 +763,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
       for (const id of ids) {
         await fetch(`/api/clients/${id}`, {
           method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
+          headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
           body: JSON.stringify({ arquivado })
         });
       }
@@ -561,7 +784,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     if (!original) return;
     setIsSyncing(true);
     try {
-      await fetch(`/api/clients/${id}`, { method: 'DELETE' });
+      await fetch(`/api/clients/${id}`, {
+        method: 'DELETE',
+        headers: { ...getSyncHeaders() }
+      });
       setClients(prev => prev.filter(c => c.id !== id));
 
       pushUndo(`Exclusão de ${original.nome}`, async () => {
@@ -579,7 +805,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       await fetch('/api/clients/bulk-delete', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify({ ids })
       });
       setClients(prev => prev.filter(c => !ids.includes(c.id)));
@@ -600,7 +826,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch('/api/clients/renew', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify({ clientId, novoVencimento, valor, plano, formaPagamento: forma })
       });
       const data = await res.json();
@@ -638,7 +864,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch('/api/clients/renew', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify({
           clientId,
           novoVencimento,
@@ -687,7 +913,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch('/api/clients/bulk-renew', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify({ renewals })
       });
       const data = await res.json();
@@ -711,7 +937,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch('/api/clients/import', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify({ clients: imported, mode })
       });
       if (res.ok) {
@@ -731,7 +957,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch('/api/servers', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify({ nome, descricao })
       });
       const newServer = await res.json();
@@ -746,7 +972,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const deleteServer = async (id: string) => {
     setIsSyncing(true);
     try {
-      await fetch(`/api/servers/${id}`, { method: 'DELETE' });
+      await fetch(`/api/servers/${id}`, {
+        method: 'DELETE',
+        headers: { ...getSyncHeaders() }
+      });
       setServers(prev => prev.filter(s => s.id !== id));
       showToast('Servidor removido!');
     } finally {
@@ -760,7 +989,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch(`/api/servers/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify(updates)
       });
       if (res.ok) {
@@ -781,7 +1010,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch('/api/server-deposits', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify(depositData)
       });
       const created = await res.json();
@@ -807,7 +1036,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const deleteServerDeposit = async (id: string) => {
     setIsSyncing(true);
     try {
-      await fetch(`/api/server-deposits/${id}`, { method: 'DELETE' });
+      await fetch(`/api/server-deposits/${id}`, {
+        method: 'DELETE',
+        headers: { ...getSyncHeaders() }
+      });
       setServerDeposits(prev => prev.filter(d => d.id !== id));
       showToast('Registro de depósito removido!');
     } finally {
@@ -822,7 +1054,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch('/api/plans', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify(planData)
       });
       const newPlan = await res.json();
@@ -839,7 +1071,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch(`/api/plans/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify(updates)
       });
       const updated = await res.json();
@@ -854,7 +1086,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const deletePlan = async (id: string) => {
     setIsSyncing(true);
     try {
-      await fetch(`/api/plans/${id}`, { method: 'DELETE' });
+      await fetch(`/api/plans/${id}`, {
+        method: 'DELETE',
+        headers: { ...getSyncHeaders() }
+      });
       setPlans(prev => prev.filter(p => p.id !== id));
       showToast('Plano removido!');
     } finally {
@@ -869,7 +1104,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch('/api/payments', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify(paymentData)
       });
       const created = await res.json();
@@ -885,7 +1120,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const confirmPayment = async (paymentId: string) => {
     setIsSyncing(true);
     try {
-      const res = await fetch(`/api/payments/${paymentId}/confirm`, { method: 'POST' });
+      const res = await fetch(`/api/payments/${paymentId}/confirm`, {
+        method: 'POST',
+        headers: { ...getSyncHeaders() }
+      });
       const data = await res.json();
       if (data.payment) {
         setPayments(prev => prev.map(p => p.id === paymentId ? data.payment : p));
@@ -907,7 +1145,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch('/api/payment-methods', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify(methodData)
       });
       const created = await res.json();
@@ -930,7 +1168,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch(`/api/payment-methods/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify(updates)
       });
       const updated = await res.json();
@@ -949,7 +1187,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const deletePaymentMethod = async (id: string) => {
     setIsSyncing(true);
     try {
-      await fetch(`/api/payment-methods/${id}`, { method: 'DELETE' });
+      await fetch(`/api/payment-methods/${id}`, {
+        method: 'DELETE',
+        headers: { ...getSyncHeaders() }
+      });
       setPaymentMethods(prev => prev.filter(m => m.id !== id));
       showToast('Forma de pagamento removida!');
     } finally {
@@ -975,7 +1216,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch('/api/message-templates', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify(tmplData)
       });
       const created = await res.json();
@@ -993,7 +1234,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch(`/api/message-templates/${id}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify(updates)
       });
       const updated = await res.json();
@@ -1008,7 +1249,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const deleteMessageTemplate = async (id: string) => {
     setIsSyncing(true);
     try {
-      await fetch(`/api/message-templates/${id}`, { method: 'DELETE' });
+      await fetch(`/api/message-templates/${id}`, {
+        method: 'DELETE',
+        headers: { ...getSyncHeaders() }
+      });
       setMessageTemplates(prev => prev.filter(t => t.id !== id));
       showToast('Modelo de mensagem excluído!');
     } finally {
@@ -1033,7 +1277,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
   const restoreDefaultTemplates = async () => {
     setIsSyncing(true);
     try {
-      const res = await fetch('/api/message-templates/restore', { method: 'POST' });
+      const res = await fetch('/api/message-templates/restore', {
+        method: 'POST',
+        headers: { ...getSyncHeaders() }
+      });
       const data = await res.json();
       if (data.templates) {
         setMessageTemplates(data.templates);
@@ -1100,7 +1347,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch('/api/automations', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify(rules)
       });
       const updated = await res.json();
@@ -1169,7 +1416,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch('/api/settings', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify(newSettings)
       });
       const updated = await res.json();
@@ -1198,7 +1445,7 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     try {
       const res = await fetch('/api/restore', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...getSyncHeaders() },
         body: JSON.stringify(data)
       });
       if (res.ok) {
@@ -1230,6 +1477,14 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
         showToast,
         copyClientField,
         copyClientFullCredentials,
+        syncToast,
+        dismissSyncToast,
+        connectedDevicesCount,
+        connectedDevices,
+        isRealtimeConnected,
+        androidPermissionModalOpen,
+        setAndroidPermissionModalOpen,
+        openAndroidPermissionAssistant,
         activeClientIdToOpen,
         setActiveClientIdToOpen,
         notifications,

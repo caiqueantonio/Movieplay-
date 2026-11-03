@@ -16,6 +16,8 @@ import { ProfileModal } from './components/ProfileModal';
 import { LoginView } from './components/LoginView';
 import { MobileNotificationsModal } from './components/MobileNotificationsModal';
 import { NotificationCenterModal } from './components/NotificationCenterModal';
+import { SyncToast } from './components/SyncToast';
+import { AndroidPermissionModal } from './components/AndroidPermissionModal';
 import { Client, UserAccount } from './types';
 
 function MainApp() {
@@ -24,6 +26,10 @@ function MainApp() {
     setActiveTab,
     clients,
     toastMessage,
+    syncToast,
+    dismissSyncToast,
+    androidPermissionModalOpen,
+    setAndroidPermissionModalOpen,
     activeClientIdToOpen,
     setActiveClientIdToOpen,
     loginUser,
@@ -227,6 +233,18 @@ function MainApp() {
       <MobileNotificationsModal
         isOpen={isMobileNotifModalOpen}
         onClose={() => setIsMobileNotifModalOpen(false)}
+      />
+
+      {/* Android Notification Permission Unlock Assistant Modal */}
+      <AndroidPermissionModal
+        isOpen={androidPermissionModalOpen}
+        onClose={() => setAndroidPermissionModalOpen(false)}
+      />
+
+      {/* Real-time Multi-Device Sync Toast (Informs about changes from other connected devices) */}
+      <SyncToast
+        toast={syncToast}
+        onDismiss={dismissSyncToast}
       />
 
       {/* Futuristic Neon Toast Notification */}
