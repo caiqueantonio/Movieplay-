@@ -165,23 +165,87 @@ interface AppContextType {
   restoreDatabase: (data: unknown) => Promise<void>;
 }
 
+// Storage cache helpers for instant zero-flash offline resilience
+function loadLocalDbCache<T>(key: string, fallback: T): T {
+  if (typeof window === 'undefined') return fallback;
+  try {
+    const raw = localStorage.getItem(key);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed !== null && parsed !== undefined) {
+        if (Array.isArray(fallback) && Array.isArray(parsed) && parsed.length > 0) {
+          return parsed as unknown as T;
+        } else if (!Array.isArray(fallback) && typeof parsed === 'object') {
+          return { ...fallback, ...parsed };
+        }
+      }
+    }
+  } catch {}
+  return fallback;
+}
+
+function saveLocalDbCache<T>(key: string, data: T): void {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(key, JSON.stringify(data));
+  } catch {}
+}
+
 const AppContext = createContext<AppContextType | undefined>(undefined);
 
 export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
   const [searchQuery, setSearchQuery] = useState<string>('');
 
-  const [clients, setClients] = useState<Client[]>(INITIAL_CLIENTS);
-  const [servers, setServers] = useState<ServerItem[]>(INITIAL_SERVERS);
-  const [plans, setPlans] = useState<PlanItem[]>(INITIAL_PLANS);
-  const [payments, setPayments] = useState<PaymentRecord[]>([]);
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodItem[]>(INITIAL_PAYMENT_METHODS);
-  const [messageTemplates, setMessageTemplates] = useState<MessageTemplate[]>(INITIAL_MESSAGE_TEMPLATES);
-  const [serverDeposits, setServerDeposits] = useState<ServerDeposit[]>(INITIAL_SERVER_DEPOSITS);
-  const [automations, setAutomations] = useState<AutomationRule[]>(INITIAL_AUTOMATIONS);
+  // Persistent React state initialized directly from LocalStorage (with fallback to mock data)
+  const [clients, setClients] = useState<Client[]>(() => loadLocalDbCache('gerenciapro_db_clients', INITIAL_CLIENTS));
+  const [servers, setServers] = useState<ServerItem[]>(() => loadLocalDbCache('gerenciapro_db_servers', INITIAL_SERVERS));
+  const [plans, setPlans] = useState<PlanItem[]>(() => loadLocalDbCache('gerenciapro_db_plans', INITIAL_PLANS));
+  const [payments, setPayments] = useState<PaymentRecord[]>(() => loadLocalDbCache('gerenciapro_db_payments', []));
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodItem[]>(() => loadLocalDbCache('gerenciapro_db_payment_methods', INITIAL_PAYMENT_METHODS));
+  const [messageTemplates, setMessageTemplates] = useState<MessageTemplate[]>(() => loadLocalDbCache('gerenciapro_db_message_templates', INITIAL_MESSAGE_TEMPLATES));
+  const [serverDeposits, setServerDeposits] = useState<ServerDeposit[]>(() => loadLocalDbCache('gerenciapro_db_server_deposits', INITIAL_SERVER_DEPOSITS));
+  const [automations, setAutomations] = useState<AutomationRule[]>(() => loadLocalDbCache('gerenciapro_db_automations', INITIAL_AUTOMATIONS));
   const [notificationLogs, setNotificationLogs] = useState<NotificationLog[]>([]);
-  const [settings, setSettings] = useState<AppSettings>(INITIAL_SETTINGS);
+  const [settings, setSettings] = useState<AppSettings>(() => loadLocalDbCache('gerenciapro_db_settings', INITIAL_SETTINGS));
   const [user, setUser] = useState<UserAccount>(INITIAL_USER);
+
+  // Auto-sync reactive states directly to LocalStorage so no refresh ever loses data
+  useEffect(() => {
+    if (clients && clients.length > 0) saveLocalDbCache('gerenciapro_db_clients', clients);
+  }, [clients]);
+
+  useEffect(() => {
+    if (servers && servers.length > 0) saveLocalDbCache('gerenciapro_db_servers', servers);
+  }, [servers]);
+
+  useEffect(() => {
+    if (plans && plans.length > 0) saveLocalDbCache('gerenciapro_db_plans', plans);
+  }, [plans]);
+
+  useEffect(() => {
+    saveLocalDbCache('gerenciapro_db_payments', payments);
+  }, [payments]);
+
+  useEffect(() => {
+    if (paymentMethods && paymentMethods.length > 0) saveLocalDbCache('gerenciapro_db_payment_methods', paymentMethods);
+  }, [paymentMethods]);
+
+  useEffect(() => {
+    if (messageTemplates && messageTemplates.length > 0) saveLocalDbCache('gerenciapro_db_message_templates', messageTemplates);
+  }, [messageTemplates]);
+
+  useEffect(() => {
+    saveLocalDbCache('gerenciapro_db_server_deposits', serverDeposits);
+  }, [serverDeposits]);
+
+  useEffect(() => {
+    if (automations && automations.length > 0) saveLocalDbCache('gerenciapro_db_automations', automations);
+  }, [automations]);
+
+  useEffect(() => {
+    saveLocalDbCache('gerenciapro_db_settings', settings);
+  }, [settings]);
 
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [activeClientIdToOpen, setActiveClientIdToOpen] = useState<string | null>(null);
@@ -262,25 +326,48 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     showToast('Ficha e credenciais completas copiadas!');
   }, [showToast]);
 
-  // Load from backend on mount
+  // Load from backend on mount and sync to localStorage cache
   const refreshData = useCallback(async () => {
     setIsSyncing(true);
     try {
       const res = await fetch('/api/bootstrap');
       if (res.ok) {
         const data = await res.json();
-        if (data.clients) setClients(data.clients);
-        if (data.servers) setServers(data.servers);
-        if (data.plans) setPlans(data.plans);
-        if (data.payments) setPayments(data.payments);
-        if (data.paymentMethods) setPaymentMethods(data.paymentMethods);
-        if (data.messageTemplates) setMessageTemplates(data.messageTemplates);
-        if (data.serverDeposits) setServerDeposits(data.serverDeposits);
-        if (data.automations) setAutomations(data.automations);
+        if (Array.isArray(data.clients)) {
+          setClients(data.clients);
+          saveLocalDbCache('gerenciapro_db_clients', data.clients);
+        }
+        if (Array.isArray(data.servers)) {
+          setServers(data.servers);
+          saveLocalDbCache('gerenciapro_db_servers', data.servers);
+        }
+        if (Array.isArray(data.plans)) {
+          setPlans(data.plans);
+          saveLocalDbCache('gerenciapro_db_plans', data.plans);
+        }
+        if (Array.isArray(data.payments)) {
+          setPayments(data.payments);
+          saveLocalDbCache('gerenciapro_db_payments', data.payments);
+        }
+        if (Array.isArray(data.paymentMethods)) {
+          setPaymentMethods(data.paymentMethods);
+          saveLocalDbCache('gerenciapro_db_payment_methods', data.paymentMethods);
+        }
+        if (Array.isArray(data.messageTemplates)) {
+          setMessageTemplates(data.messageTemplates);
+          saveLocalDbCache('gerenciapro_db_message_templates', data.messageTemplates);
+        }
+        if (Array.isArray(data.serverDeposits)) {
+          setServerDeposits(data.serverDeposits);
+          saveLocalDbCache('gerenciapro_db_server_deposits', data.serverDeposits);
+        }
+        if (Array.isArray(data.automations)) {
+          setAutomations(data.automations);
+          saveLocalDbCache('gerenciapro_db_automations', data.automations);
+        }
         if (data.notificationLogs) setNotificationLogs(data.notificationLogs);
         if (data.settings) {
-          // Merge with defaults to ensure billingConfig and alertSchedule exist
-          setSettings({
+          const mergedSettings: AppSettings = {
             ...INITIAL_SETTINGS,
             ...data.settings,
             billingConfig: {
@@ -291,7 +378,9 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
               ...INITIAL_SETTINGS.alertSchedule,
               ...(data.settings.alertSchedule || {})
             }
-          });
+          };
+          setSettings(mergedSettings);
+          saveLocalDbCache('gerenciapro_db_settings', mergedSettings);
         }
         // Keep active session if one exists in localStorage, otherwise use data.user
         try {
@@ -347,90 +436,227 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     }
   }, []);
 
-  // Realtime update handler from SSE
+  // Realtime update handler from SSE (unpacks both raw and wrapped payloads)
   const applyRealtimeUpdate = useCallback((payload: SyncEventPayload) => {
     const { action, entity, data } = payload;
+    if (!data) return;
 
     if (entity === 'client') {
-      if (action === 'client_created' && data?.client) {
+      const clientObj: Client | null = data?.client || (data?.id && data?.nome ? data : null);
+
+      if (action === 'client_created' && clientObj) {
         setClients(prev => {
-          if (prev.some(c => c.id === data.client.id)) return prev;
-          return [data.client, ...prev];
+          if (prev.some(c => c.id === clientObj.id)) {
+            return prev.map(c => c.id === clientObj.id ? { ...c, ...clientObj } : c);
+          }
+          const next = [clientObj, ...prev];
+          saveLocalDbCache('gerenciapro_db_clients', next);
+          return next;
         });
-      } else if ((action === 'client_updated' || action === 'client_renewed') && data?.client) {
-        setClients(prev => prev.map(c => c.id === data.client.id ? { ...c, ...data.client } : c));
+      } else if ((action === 'client_updated' || action === 'client_renewed') && clientObj) {
+        setClients(prev => {
+          const next = prev.map(c => c.id === clientObj.id ? { ...c, ...clientObj } : c);
+          saveLocalDbCache('gerenciapro_db_clients', next);
+          return next;
+        });
         if (data.payment) {
-          setPayments(prev => [data.payment, ...prev.filter(p => p.id !== data.payment.id)]);
+          setPayments(prev => {
+            const next = [data.payment, ...prev.filter(p => p.id !== data.payment.id)];
+            saveLocalDbCache('gerenciapro_db_payments', next);
+            return next;
+          });
         }
-      } else if (action === 'client_deleted' && data?.id) {
-        setClients(prev => prev.filter(c => c.id !== data.id));
+      } else if (action === 'client_deleted') {
+        const delId = data?.id || (typeof data === 'string' ? data : null);
+        if (delId) {
+          setClients(prev => {
+            const next = prev.filter(c => c.id !== delId);
+            saveLocalDbCache('gerenciapro_db_clients', next);
+            return next;
+          });
+        }
       } else if (action === 'clients_bulk_deleted' && Array.isArray(data?.ids)) {
-        setClients(prev => prev.filter(c => !data.ids.includes(c.id)));
+        setClients(prev => {
+          const next = prev.filter(c => !data.ids.includes(c.id));
+          saveLocalDbCache('gerenciapro_db_clients', next);
+          return next;
+        });
       } else if (action === 'clients_bulk_renewed' && Array.isArray(data?.updatedClients)) {
         const map = new Map<string, Client>(data.updatedClients.map((c: Client) => [c.id, c]));
-        setClients(prev => prev.map(c => map.get(c.id) || c));
+        setClients(prev => {
+          const next = prev.map(c => map.get(c.id) || c);
+          saveLocalDbCache('gerenciapro_db_clients', next);
+          return next;
+        });
         if (Array.isArray(data.payments)) {
-          setPayments(prev => [...data.payments, ...prev]);
+          setPayments(prev => {
+            const next = [...data.payments, ...prev];
+            saveLocalDbCache('gerenciapro_db_payments', next);
+            return next;
+          });
         }
       } else if (action === 'clients_imported') {
         refreshData();
       }
     } else if (entity === 'server') {
-      if (action === 'server_created' && data?.server) {
-        setServers(prev => [...prev.filter(s => s.id !== data.server.id), data.server]);
-      } else if (action === 'server_updated' && data?.server) {
-        setServers(prev => prev.map(s => s.id === data.server.id ? { ...s, ...data.server } : s));
-      } else if (action === 'server_deleted' && data?.id) {
-        setServers(prev => prev.filter(s => s.id !== data.id));
-      } else if (action === 'server_deposit_created' && data?.deposit) {
-        setServerDeposits(prev => [data.deposit, ...prev.filter(d => d.id !== data.deposit.id)]);
-      } else if (action === 'server_deposit_deleted' && data?.id) {
-        setServerDeposits(prev => prev.filter(d => d.id !== data.id));
+      const serverObj: ServerItem | null = data?.server || (data?.id && data?.nome ? data : null);
+
+      if (action === 'server_created' && serverObj) {
+        setServers(prev => {
+          const next = [...prev.filter(s => s.id !== serverObj.id), serverObj];
+          saveLocalDbCache('gerenciapro_db_servers', next);
+          return next;
+        });
+      } else if (action === 'server_updated' && serverObj) {
+        setServers(prev => {
+          const next = prev.map(s => s.id === serverObj.id ? { ...s, ...serverObj } : s);
+          saveLocalDbCache('gerenciapro_db_servers', next);
+          return next;
+        });
+      } else if (action === 'server_deleted') {
+        const delId = data?.id || (typeof data === 'string' ? data : null);
+        if (delId) {
+          setServers(prev => {
+            const next = prev.filter(s => s.id !== delId);
+            saveLocalDbCache('gerenciapro_db_servers', next);
+            return next;
+          });
+        }
+      } else if (action === 'server_deposit_created') {
+        const depObj: ServerDeposit | null = data?.deposit || (data?.id && data?.servidorId ? data : null);
+        if (depObj) {
+          setServerDeposits(prev => {
+            const next = [depObj, ...prev.filter(d => d.id !== depObj.id)];
+            saveLocalDbCache('gerenciapro_db_server_deposits', next);
+            return next;
+          });
+        }
+      } else if (action === 'server_deposit_deleted') {
+        const delId = data?.id || (typeof data === 'string' ? data : null);
+        if (delId) {
+          setServerDeposits(prev => {
+            const next = prev.filter(d => d.id !== delId);
+            saveLocalDbCache('gerenciapro_db_server_deposits', next);
+            return next;
+          });
+        }
       }
     } else if (entity === 'plan') {
-      if (action === 'plan_created' && data?.plan) {
-        setPlans(prev => [...prev.filter(p => p.id !== data.plan.id), data.plan]);
-      } else if (action === 'plan_updated' && data?.plan) {
-        setPlans(prev => prev.map(p => p.id === data.plan.id ? { ...p, ...data.plan } : p));
-      } else if (action === 'plan_deleted' && data?.id) {
-        setPlans(prev => prev.filter(p => p.id !== data.id));
+      const planObj: PlanItem | null = data?.plan || (data?.id && data?.nome ? data : null);
+
+      if (action === 'plan_created' && planObj) {
+        setPlans(prev => {
+          const next = [...prev.filter(p => p.id !== planObj.id), planObj];
+          saveLocalDbCache('gerenciapro_db_plans', next);
+          return next;
+        });
+      } else if (action === 'plan_updated' && planObj) {
+        setPlans(prev => {
+          const next = prev.map(p => p.id === planObj.id ? { ...p, ...planObj } : p);
+          saveLocalDbCache('gerenciapro_db_plans', next);
+          return next;
+        });
+      } else if (action === 'plan_deleted') {
+        const delId = data?.id || (typeof data === 'string' ? data : null);
+        if (delId) {
+          setPlans(prev => {
+            const next = prev.filter(p => p.id !== delId);
+            saveLocalDbCache('gerenciapro_db_plans', next);
+            return next;
+          });
+        }
       }
     } else if (entity === 'payment') {
-      if (action === 'payment_created' && data?.payment) {
-        setPayments(prev => [data.payment, ...prev.filter(p => p.id !== data.payment.id)]);
+      const payObj: PaymentRecord | null = data?.payment || (data?.id && data?.clienteId ? data : null);
+
+      if (action === 'payment_created' && payObj) {
+        setPayments(prev => {
+          const next = [payObj, ...prev.filter(p => p.id !== payObj.id)];
+          saveLocalDbCache('gerenciapro_db_payments', next);
+          return next;
+        });
       } else if (action === 'payment_confirmed') {
-        if (data?.payment) {
-          setPayments(prev => prev.map(p => p.id === data.payment.id ? data.payment : p));
+        if (payObj) {
+          setPayments(prev => {
+            const next = prev.map(p => p.id === payObj.id ? payObj : p);
+            saveLocalDbCache('gerenciapro_db_payments', next);
+            return next;
+          });
         }
         if (data?.client) {
-          setClients(prev => prev.map(c => c.id === data.client.id ? data.client : c));
+          setClients(prev => {
+            const next = prev.map(c => c.id === data.client.id ? data.client : c);
+            saveLocalDbCache('gerenciapro_db_clients', next);
+            return next;
+          });
         }
       }
     } else if (entity === 'payment_method') {
-      if (action === 'payment_method_created' && data?.paymentMethod) {
-        setPaymentMethods(prev => [data.paymentMethod, ...prev.filter(m => m.id !== data.paymentMethod.id)]);
-      } else if (action === 'payment_method_updated' && data?.paymentMethod) {
-        setPaymentMethods(prev => prev.map(m => m.id === data.paymentMethod.id ? data.paymentMethod : m));
-      } else if (action === 'payment_method_deleted' && data?.id) {
-        setPaymentMethods(prev => prev.filter(m => m.id !== data.id));
+      const methodObj: PaymentMethodItem | null = data?.paymentMethod || (data?.id && data?.nome ? data : null);
+
+      if (action === 'payment_method_created' && methodObj) {
+        setPaymentMethods(prev => {
+          const next = [methodObj, ...prev.filter(m => m.id !== methodObj.id)];
+          saveLocalDbCache('gerenciapro_db_payment_methods', next);
+          return next;
+        });
+      } else if (action === 'payment_method_updated' && methodObj) {
+        setPaymentMethods(prev => {
+          const next = prev.map(m => m.id === methodObj.id ? methodObj : m);
+          saveLocalDbCache('gerenciapro_db_payment_methods', next);
+          return next;
+        });
+      } else if (action === 'payment_method_deleted') {
+        const delId = data?.id || (typeof data === 'string' ? data : null);
+        if (delId) {
+          setPaymentMethods(prev => {
+            const next = prev.filter(m => m.id !== delId);
+            saveLocalDbCache('gerenciapro_db_payment_methods', next);
+            return next;
+          });
+        }
       }
     } else if (entity === 'template') {
-      if (action === 'template_created' && data?.template) {
-        setMessageTemplates(prev => [data.template, ...prev.filter(t => t.id !== data.template.id)]);
-      } else if (action === 'template_updated' && data?.template) {
-        setMessageTemplates(prev => prev.map(t => t.id === data.template.id ? { ...t, ...data.template } : t));
-      } else if (action === 'template_deleted' && data?.id) {
-        setMessageTemplates(prev => prev.filter(t => t.id !== data.id));
+      const tmplObj: MessageTemplate | null = data?.template || (data?.id && data?.titulo ? data : null);
+
+      if (action === 'template_created' && tmplObj) {
+        setMessageTemplates(prev => {
+          const next = [tmplObj, ...prev.filter(t => t.id !== tmplObj.id)];
+          saveLocalDbCache('gerenciapro_db_message_templates', next);
+          return next;
+        });
+      } else if (action === 'template_updated' && tmplObj) {
+        setMessageTemplates(prev => {
+          const next = prev.map(t => t.id === tmplObj.id ? { ...t, ...tmplObj } : t);
+          saveLocalDbCache('gerenciapro_db_message_templates', next);
+          return next;
+        });
+      } else if (action === 'template_deleted') {
+        const delId = data?.id || (typeof data === 'string' ? data : null);
+        if (delId) {
+          setMessageTemplates(prev => {
+            const next = prev.filter(t => t.id !== delId);
+            saveLocalDbCache('gerenciapro_db_message_templates', next);
+            return next;
+          });
+        }
       } else if (action === 'templates_restored' && Array.isArray(data?.templates)) {
         setMessageTemplates(data.templates);
+        saveLocalDbCache('gerenciapro_db_message_templates', data.templates);
       }
     } else if (entity === 'setting') {
-      if (data?.settings) {
-        setSettings(prev => ({ ...prev, ...data.settings }));
+      const settingsObj = data?.settings || (data?.billingConfig || data?.alertSchedule ? data : null);
+      if (settingsObj) {
+        setSettings(prev => {
+          const next = { ...prev, ...settingsObj };
+          saveLocalDbCache('gerenciapro_db_settings', next);
+          return next;
+        });
       }
     } else if (entity === 'user') {
-      if (data?.user) {
-        setUser(prev => ({ ...prev, ...data.user }));
+      const userObj = data?.user || (data?.email ? data : null);
+      if (userObj) {
+        setUser(prev => ({ ...prev, ...userObj }));
       }
     } else if (entity === 'all') {
       refreshData();
@@ -565,7 +791,10 @@ export const AppProvider: React.FC<{ children: ReactNode }> = ({ children }) => 
     } catch (e) {
       console.warn('Could not persist user update to server', e);
     }
-  }, []);
+
+    // Immediately pull latest data from backend so new device has current database
+    await refreshData();
+  }, [refreshData]);
 
   const logoutUser = useCallback(() => {
     const emptyUser: UserAccount = {

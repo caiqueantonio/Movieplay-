@@ -33,7 +33,8 @@ function MainApp() {
     activeClientIdToOpen,
     setActiveClientIdToOpen,
     loginUser,
-    logoutUser
+    logoutUser,
+    refreshData
   } = useApp();
 
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
@@ -140,6 +141,7 @@ function MainApp() {
       await loginUser(fullUser);
     }
     setIsAuthenticated(true);
+    await refreshData();
   };
 
   const handleLogout = () => {

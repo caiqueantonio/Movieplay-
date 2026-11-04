@@ -59,7 +59,8 @@ export const ClientModal: React.FC<ClientModalProps> = ({
     sendWhatsAppReminder,
     copyClientField,
     copyClientFullCredentials,
-    playSound
+    playSound,
+    showToast
   } = useApp();
 
   const [mode, setMode] = useState<'view' | 'edit' | 'create'>(initialMode);
@@ -176,7 +177,7 @@ export const ClientModal: React.FC<ClientModalProps> = ({
       setLocalFeedback('Foto carregada!');
       setTimeout(() => setLocalFeedback(null), 2000);
     } catch {
-      alert('Erro ao processar imagem. Selecione um arquivo válido (JPG ou PNG).');
+      showToast('Erro ao processar imagem. Selecione um arquivo JPG ou PNG.');
     }
   };
 
@@ -189,10 +190,10 @@ export const ClientModal: React.FC<ClientModalProps> = ({
         setLocalFeedback('Imagem colada com sucesso!');
         setTimeout(() => setLocalFeedback(null), 2000);
       } else {
-        alert('Nenhuma imagem encontrada na área de transferência.');
+        showToast('Nenhuma imagem encontrada na área de transferência.');
       }
     } catch {
-      alert('Não foi possível ler a área de transferência neste navegador.');
+      showToast('Não foi possível ler a área de transferência neste navegador.');
     }
   };
 
@@ -205,7 +206,8 @@ export const ClientModal: React.FC<ClientModalProps> = ({
   const handleSave = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     if (!formData.nome.trim()) {
-      alert('O Nome do cliente é obrigatório.');
+      showToast('O Nome do cliente é obrigatório.');
+      setLocalFeedback('⚠️ O Nome do cliente é obrigatório.');
       return;
     }
 
@@ -213,18 +215,18 @@ export const ClientModal: React.FC<ClientModalProps> = ({
     try {
       if (mode === 'create') {
         await addClient(formData);
-        setLocalFeedback('Cliente cadastrado com sucesso!');
+        showToast(`Cliente ${formData.nome} cadastrado com sucesso!`);
       } else if (client) {
         await updateClient(client.id, formData);
-        setLocalFeedback('Alterações salvas com sucesso!');
+        showToast(`Alterações de ${formData.nome} salvas com sucesso!`);
       }
       setTimeout(() => {
         setIsSaving(false);
         onClose();
-      }, 350);
+      }, 250);
     } catch (err) {
       console.error('Erro ao salvar cliente:', err);
-      alert('Erro ao salvar cliente. Tente novamente.');
+      showToast('Erro ao salvar cliente. Tente novamente.');
       setIsSaving(false);
     }
   };

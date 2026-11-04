@@ -165,9 +165,16 @@ function loadDatabase(): DatabaseSchema {
 
 function saveDatabase(db: DatabaseSchema) {
   try {
-    fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
+    const tmp = DB_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(db, null, 2), 'utf-8');
+    fs.renameSync(tmp, DB_FILE);
   } catch (err) {
-    console.error('Error saving db.json', err);
+    console.error('Error saving db.json atomically, trying direct write:', err);
+    try {
+      fs.writeFileSync(DB_FILE, JSON.stringify(db, null, 2), 'utf-8');
+    } catch (directErr) {
+      console.error('Direct write also failed:', directErr);
+    }
   }
 }
 

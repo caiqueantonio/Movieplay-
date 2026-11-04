@@ -32,8 +32,17 @@ self.addEventListener('activate', (event) => {
 });
 
 self.addEventListener('fetch', (event) => {
-  // Never cache API routes or Mercado Pago calls
-  if (event.request.url.includes('/api/')) {
+  // Never cache API routes, Vite dev server modules, or non-GET requests
+  const url = event.request.url;
+  if (
+    event.request.method !== 'GET' ||
+    url.includes('/api/') ||
+    url.includes('/@vite') ||
+    url.includes('/@fs') ||
+    url.includes('/src/') ||
+    url.includes('/node_modules/') ||
+    url.includes('?t=')
+  ) {
     return;
   }
   
